@@ -13,7 +13,7 @@ app.use(express.json());
 
 app.get("/health", (_req, res) => {
   return sendSuccess(res, {
-    status: "ok",
+    status: "ok Andres",
     service: "ensenada-transit-location-service",
   });
 });

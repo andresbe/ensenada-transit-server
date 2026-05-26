@@ -1,0 +1,20 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": { "routeVariantId": "amp_indeco_ida" },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [-116.6280, 31.8460],
+          [-116.6195, 31.8530],
+          [-116.6110, 31.8605],
+          [-116.6025, 31.8680],
+          [-116.5940, 31.8750],
+          [-116.5860, 31.8825]
+        ]
+      }
+    }
+  ]
+}

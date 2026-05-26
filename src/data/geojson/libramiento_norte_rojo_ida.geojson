@@ -1,0 +1,20 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": { "routeVariantId": "libramiento_norte_rojo_ida" },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [-116.6350, 31.8500],
+          [-116.6240, 31.8580],
+          [-116.6120, 31.8660],
+          [-116.6000, 31.8740],
+          [-116.5880, 31.8830],
+          [-116.5760, 31.8910]
+        ]
+      }
+    }
+  ]
+}

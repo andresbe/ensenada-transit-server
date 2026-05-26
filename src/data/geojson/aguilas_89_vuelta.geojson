@@ -1,0 +1,20 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": { "routeVariantId": "aguilas_89_vuelta" },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [-116.5820, 31.8760],
+          [-116.5890, 31.8690],
+          [-116.5950, 31.8625],
+          [-116.6020, 31.8560],
+          [-116.6080, 31.8490],
+          [-116.6150, 31.8420]
+        ]
+      }
+    }
+  ]
+}

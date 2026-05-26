@@ -1,0 +1,20 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": { "routeVariantId": "ruta_violeta_vuelta" },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [-116.5790, 31.8820],
+          [-116.5845, 31.8760],
+          [-116.5900, 31.8700],
+          [-116.5964, 31.8667],
+          [-116.6010, 31.8600],
+          [-116.6065, 31.8550]
+        ]
+      }
+    }
+  ]
+}

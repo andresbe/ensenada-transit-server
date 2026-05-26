@@ -11,26 +11,56 @@ export interface LocationUpdateRequest {
   routeVariantDirection: RouteVariantDirection;
   latitude: number;
   longitude: number;
-  accuracy: number;
-  speed: number;
-  heading: number;
+  accuracy?: number;
+  speed?: number;
+  heading?: number;
   timestamp: number;
 }
 
-export interface StoredLocation extends LocationUpdateRequest {
+export type Confidence = "high" | "medium" | "low";
+
+export interface LiveBusLocation extends LocationUpdateRequest {
   updatedAt: number;
+  routeProgressMeters?: number;
+  snappedLatitude?: number;
+  snappedLongitude?: number;
+  distanceFromRouteMeters?: number;
+  avgSpeedMps?: number;
+  isStopped?: boolean;
+  directionConfidence?: Confidence;
+  etaConfidence?: Confidence;
 }
 
 export interface LiveBus {
   busId: string;
+  sourceId: string;
+  sourceType: SourceType;
   routeId: string;
   routeVariantId: string;
   routeVariantDirection: RouteVariantDirection;
   latitude: number;
   longitude: number;
-  accuracy: number;
-  speed: number;
-  heading: number;
+  accuracy?: number;
+  speed?: number;
+  heading?: number;
+  timestamp: number;
   updatedAt: number;
+  routeProgressMeters?: number;
+  snappedLatitude?: number;
+  snappedLongitude?: number;
+  distanceFromRouteMeters?: number;
+  avgSpeedMps?: number;
+  isStopped?: boolean;
+  directionConfidence?: Confidence;
+  etaConfidence?: Confidence;
   isStale: boolean;
+}
+
+export interface EtaBus extends LiveBus {
+  distanceToUserMeters: number;
+  etaToUserSeconds: number;
+  etaToUserMinutes: number;
+  etaUserToDestinationSeconds?: number;
+  etaUserToDestinationMinutes?: number;
+  isViable: boolean;
 }

@@ -128,6 +128,10 @@ const calculateEtaConfidence = (location: LiveBusLocation): Confidence => {
   return location.directionConfidence ?? "low";
 };
 
+const isSpeedUsableForEta = (speed: number | undefined): speed is number => {
+  return speed !== undefined && speed >= 0.7 && speed <= maxReasonableBusSpeedMps;
+};
+
 const toLiveBus = (location: LiveBusLocation, now = Date.now()): LiveBus => {
   return {
     busId: location.busId,
@@ -245,33 +249,54 @@ export const locationsService = {
       };
     }
 
+    const destinationIsAhead =
+      destinationSnap === undefined || userSnap.progressMeters < destinationSnap.progressMeters;
+
     const buses = this.getLiveBusesByRouteVariant(routeVariantId, includeStale)
-      .filter((bus) => {
-        if (bus.routeProgressMeters === undefined || bus.avgSpeedMps === undefined) {
-          return false;
-        }
-
-        if (bus.routeProgressMeters >= userSnap.progressMeters) {
-          return false;
-        }
-
-        if (destinationSnap && userSnap.progressMeters >= destinationSnap.progressMeters) {
-          return false;
-        }
-
-        return bus.avgSpeedMps > 0;
-      })
       .map((bus): EtaBus => {
-        const busProgress = bus.routeProgressMeters as number;
-        const avgSpeedMps = Math.max(bus.avgSpeedMps ?? defaultUrbanBusSpeedMps, 0.7);
-        const distanceToUserMeters = userSnap.progressMeters - busProgress;
+        const hasProgress = bus.routeProgressMeters !== undefined;
+        const busProgress = bus.routeProgressMeters ?? userSnap.progressMeters;
+        const rawDistanceToUserMeters = userSnap.progressMeters - busProgress;
+        const distanceToUserMeters = Math.abs(rawDistanceToUserMeters);
+        const avgSpeedMps = isSpeedUsableForEta(bus.avgSpeedMps)
+          ? bus.avgSpeedMps
+          : defaultUrbanBusSpeedMps;
+        const hasUsableSpeed = isSpeedUsableForEta(bus.avgSpeedMps);
         const etaToUserSeconds = Math.round(distanceToUserMeters / avgSpeedMps);
-        const etaUserToDestinationSeconds = destinationSnap
-          ? Math.round((destinationSnap.progressMeters - userSnap.progressMeters) / avgSpeedMps)
-          : undefined;
+        const etaUserToDestinationSeconds =
+          destinationSnap && destinationIsAhead
+            ? Math.round((destinationSnap.progressMeters - userSnap.progressMeters) / avgSpeedMps)
+            : undefined;
+
+        let reason: EtaBus["reason"];
+
+        if (!hasProgress) {
+          reason = "insufficient_data";
+        } else if (
+          bus.distanceFromRouteMeters !== undefined &&
+          bus.distanceFromRouteMeters > offRouteLowConfidenceThresholdMeters
+        ) {
+          reason = "far_from_route";
+        } else if (busProgress >= userSnap.progressMeters) {
+          reason = "passed_user";
+        } else if (!destinationIsAhead) {
+          reason = "opposite_direction";
+        } else if (!hasUsableSpeed) {
+          reason = "insufficient_speed_data";
+        } else if (bus.directionConfidence === "low") {
+          reason = "opposite_direction";
+        }
+
+        const isViable = reason === undefined;
+        const etaConfidence: Confidence = isViable ? bus.etaConfidence ?? "medium" : "low";
+        const directionConfidence: Confidence = isViable
+          ? bus.directionConfidence ?? "medium"
+          : "low";
 
         return {
           ...bus,
+          directionConfidence,
+          etaConfidence,
           distanceToUserMeters: Math.round(distanceToUserMeters),
           etaToUserSeconds,
           etaToUserMinutes: Math.ceil(etaToUserSeconds / 60),
@@ -280,7 +305,8 @@ export const locationsService = {
             etaUserToDestinationSeconds === undefined
               ? undefined
               : Math.ceil(etaUserToDestinationSeconds / 60),
-          isViable: true,
+          isViable,
+          reason,
         };
       })
       .sort((a, b) => a.etaToUserSeconds - b.etaToUserSeconds);

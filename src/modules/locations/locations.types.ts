@@ -63,4 +63,10 @@ export interface EtaBus extends LiveBus {
   etaUserToDestinationSeconds?: number;
   etaUserToDestinationMinutes?: number;
   isViable: boolean;
+  reason?:
+    | "passed_user"
+    | "opposite_direction"
+    | "far_from_route"
+    | "insufficient_data"
+    | "insufficient_speed_data";
 }

@@ -1,4 +1,5 @@
 import { env } from "../../config/env";
+import { haversineDistanceMeters } from "../../shared/geo/geometry";
 import { routeGeometryService } from "../routes/routeGeometry.service";
 import {
   Confidence,
@@ -132,6 +133,11 @@ const isSpeedUsableForEta = (speed: number | undefined): speed is number => {
   return speed !== undefined && speed >= 0.7 && speed <= maxReasonableBusSpeedMps;
 };
 
+const busPoint = (bus: LiveBus): { latitude: number; longitude: number } => ({
+  latitude: bus.latitude,
+  longitude: bus.longitude,
+});
+
 const toLiveBus = (location: LiveBusLocation, now = Date.now()): LiveBus => {
   return {
     busId: location.busId,
@@ -256,8 +262,15 @@ export const locationsService = {
       .map((bus): EtaBus => {
         const hasProgress = bus.routeProgressMeters !== undefined;
         const busProgress = bus.routeProgressMeters ?? userSnap.progressMeters;
+        const busIsFarFromRoute =
+          bus.distanceFromRouteMeters !== undefined &&
+          bus.distanceFromRouteMeters > offRouteLowConfidenceThresholdMeters;
         const rawDistanceToUserMeters = userSnap.progressMeters - busProgress;
-        const distanceToUserMeters = Math.abs(rawDistanceToUserMeters);
+        const routeDistanceToUserMeters = Math.abs(rawDistanceToUserMeters);
+        const gpsDistanceToUserMeters = haversineDistanceMeters(busPoint(bus), userPoint);
+        const distanceToUserMeters = !hasProgress || busIsFarFromRoute
+          ? gpsDistanceToUserMeters
+          : routeDistanceToUserMeters;
         const avgSpeedMps = isSpeedUsableForEta(bus.avgSpeedMps)
           ? bus.avgSpeedMps
           : defaultUrbanBusSpeedMps;
@@ -272,10 +285,7 @@ export const locationsService = {
 
         if (!hasProgress) {
           reason = "insufficient_data";
-        } else if (
-          bus.distanceFromRouteMeters !== undefined &&
-          bus.distanceFromRouteMeters > offRouteLowConfidenceThresholdMeters
-        ) {
+        } else if (busIsFarFromRoute) {
           reason = "far_from_route";
         } else if (busProgress >= userSnap.progressMeters) {
           reason = "passed_user";

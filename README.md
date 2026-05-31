@@ -74,6 +74,26 @@ On update, the service snaps the bus to the matching route variant GeoJSON when 
 - `directionConfidence`
 - `etaConfidence`
 
+`accuracy`, `speed`, and `heading` are optional. If a mobile client sends any of them as `null`, the service treats the field as omitted. When `speed` is provided, it must be greater than or equal to `0`; when `heading` is provided, it must be between `0` and `360`.
+
+## Supported route variants
+
+- Acapulco
+  - `acapulco_ida`
+  - `acapulco_vuelta`
+- Ruta Violeta
+  - `ruta_violeta_ida`
+  - `ruta_violeta_vuelta`
+- Libramiento Norte Rojo
+  - `libramiento_norte_rojo_ida`
+  - `libramiento_norte_rojo_vuelta`
+- Aguilas 89
+  - `aguilas_89_ida`
+  - `aguilas_89_vuelta`
+- AMP Indeco
+  - `amp_indeco_ida`
+  - `amp_indeco_vuelta`
+
 ## Get live buses by route variant
 
 ```bash

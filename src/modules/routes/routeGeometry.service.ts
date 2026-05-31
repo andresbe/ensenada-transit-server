@@ -35,6 +35,8 @@ export interface RouteSnapResult extends NearestPolylinePoint {
 }
 
 const supportedRouteVariantIds = [
+  "acapulco_ida",
+  "acapulco_vuelta",
   "ruta_violeta_ida",
   "ruta_violeta_vuelta",
   "libramiento_norte_rojo_ida",

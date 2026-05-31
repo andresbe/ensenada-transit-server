@@ -1,0 +1,24 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "routeId": "acapulco",
+        "routeVariantId": "acapulco_ida",
+        "direction": "ida",
+        "name": "Acapulco Ida"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [-116.60493, 31.833675],
+          [-116.605125, 31.83466],
+          [-116.605342, 31.835707],
+          [-116.605548, 31.836755],
+          [-116.606485, 31.836623]
+        ]
+      }
+    }
+  ]
+}

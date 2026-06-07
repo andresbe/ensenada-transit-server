@@ -1,6 +1,7 @@
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import { query } from "../db";
+import { sendWelcomeEmail } from "../email/email.service";
 import { AppError } from "../shared/errors";
 import { JWTPayload, User, UserRole, UserWithHash } from "../types";
 import { RegisterInput } from "./validators";
@@ -55,6 +56,13 @@ export const register = async (input: RegisterInput): Promise<{ user: User; toke
     `INSERT INTO user_preferences (user_id) VALUES ($1) ON CONFLICT DO NOTHING`,
     [user.id],
   );
+
+  // Send welcome email — non-blocking, failures do not affect registration
+  try {
+    await sendWelcomeEmail(user.email, user.display_name ?? user.email);
+  } catch (emailErr) {
+    console.error("[auth] Welcome email failed (registration still succeeded):", emailErr);
+  }
 
   return { user, token: generateToken(user) };
 };

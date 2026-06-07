@@ -19,6 +19,7 @@ Full-featured Node.js + Express backend for the Ensenada Transit app. Handles au
 - [Reports Module](#reports-module)
 - [Driver Sessions Module](#driver-sessions-module)
 - [Tracking Module](#tracking-module)
+- [Email Service](#email-service)
 - [Security](#security)
 - [Database Schema](#database-schema)
 - [Redis Cache](#redis-cache)
@@ -131,6 +132,9 @@ ensenada-transit-server/
 │   │   ├── auth.service.ts           # register, login, socialAuth, guestAuth, refreshToken
 │   │   ├── auth.middleware.ts        # authMiddleware, adminMiddleware, driverMiddleware
 │   │   └── validators.ts             # Input validation for register/login
+│   ├── email/
+│   │   ├── email.config.ts           # SMTP configuration from environment variables
+│   │   └── email.service.ts          # sendWelcomeEmail — Nodemailer + markdown-it
 │   ├── users/
 │   │   ├── users.routes.ts           # GET/PATCH /users/me
 │   │   └── users.service.ts          # getUserById, updateUser, updatePreferences
@@ -192,13 +196,23 @@ JWT_EXPIRES_IN=7d                  # Token expiration (default: 7d)
 
 # ── Tracking ──────────────────────────────────────────────────
 LOCATION_TTL_SECONDS=90            # How long a bus location is considered fresh (default: 90)
+
+# ── Email / SMTP ───────────────────────────────────────────────
+SMTP_HOST=smtp.ethereal.email      # SMTP server hostname (default: smtp.ethereal.email)
+SMTP_PORT=587                      # SMTP server port (default: 587)
+SMTP_USER=                         # SMTP account username
+SMTP_PASSWORD=                     # SMTP account password or app password
+SMTP_FROM_EMAIL=noreply@ensenadatransit.com  # Sender email address
+SMTP_FROM_NAME=Ensenada Transit    # Sender display name
 ```
 
 **Required in production:** `DATABASE_URL`, `JWT_SECRET`
 
-**Optional with defaults:** `PORT`, `NODE_ENV`, `CORS_ORIGIN`, `REDIS_URL`, `JWT_EXPIRES_IN`, `LOCATION_TTL_SECONDS`
+**Optional with defaults:** `PORT`, `NODE_ENV`, `CORS_ORIGIN`, `REDIS_URL`, `JWT_EXPIRES_IN`, `LOCATION_TTL_SECONDS`, `SMTP_HOST`, `SMTP_PORT`, `SMTP_FROM_EMAIL`, `SMTP_FROM_NAME`
 
 > The app starts even if Redis is unavailable. Rate limiting and bus location caching degrade gracefully — Redis errors are logged and the request is allowed through.
+
+> Email sending is non-blocking. If SMTP credentials are not configured, welcome emails will fail silently — registration still succeeds and the error is logged.
 
 ---
 
@@ -1263,6 +1277,53 @@ The following route variant IDs have GeoJSON polylines available for route snapp
 | Libramiento Norte Rojo | `libramiento_norte_rojo_ida`, `libramiento_norte_rojo_vuelta` |
 | Aguilas 89 | `aguilas_89_ida`, `aguilas_89_vuelta` |
 | AMP Indeco | `amp_indeco_ida`, `amp_indeco_vuelta` |
+
+---
+
+## Email Service
+
+A welcome email is sent automatically to every new user who registers via `POST /auth/register`. The email is rendered from the `email/welcome-email.md` template, converted to HTML, and delivered over SMTP using Nodemailer.
+
+Email sending is **non-blocking** — if the SMTP server is unreachable or credentials are wrong, the error is logged and registration still succeeds. The user always receives their JWT token regardless of email delivery status.
+
+### SMTP environment variables
+
+| Variable | Description | Default |
+|---|---|---|
+| `SMTP_HOST` | SMTP server hostname | `smtp.ethereal.email` |
+| `SMTP_PORT` | SMTP server port | `587` |
+| `SMTP_USER` | SMTP account username | _(empty)_ |
+| `SMTP_PASSWORD` | SMTP account password or app password | _(empty)_ |
+| `SMTP_FROM_EMAIL` | Sender email address | `noreply@ensenadatransit.com` |
+| `SMTP_FROM_NAME` | Sender display name | `Ensenada Transit` |
+
+### Gmail setup
+
+Enable 2-Step Verification on your Google account, then generate an **App Password** (Google Account → Security → App Passwords). Use `smtp.gmail.com` as the host and port `587`.
+
+```bash
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USER=you@gmail.com
+SMTP_PASSWORD=your_16_char_app_password
+SMTP_FROM_EMAIL=you@gmail.com
+SMTP_FROM_NAME=Ensenada Transit
+```
+
+### Ethereal Email (development)
+
+[Ethereal Email](https://ethereal.email) is a free, disposable SMTP sandbox — emails are captured and viewable in a web inbox but never delivered to real recipients. Create a free account at ethereal.email and copy the generated credentials into your `.env`.
+
+```bash
+SMTP_HOST=smtp.ethereal.email
+SMTP_PORT=587
+SMTP_USER=your.ethereal.user@ethereal.email
+SMTP_PASSWORD=your_ethereal_password
+SMTP_FROM_EMAIL=noreply@ensenadatransit.com
+SMTP_FROM_NAME=Ensenada Transit
+```
+
+After registration, the server logs the `messageId`. Paste it into the Ethereal inbox search to preview the rendered email.
 
 ---
 

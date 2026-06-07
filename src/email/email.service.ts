@@ -10,10 +10,16 @@ const transporter = nodemailer.createTransport({
   host: emailConfig.host,
   port: emailConfig.port,
   secure: emailConfig.port === 465, // true for port 465 (SSL), false for 587 (STARTTLS)
-  auth: {
-    user: emailConfig.user,
-    pass: emailConfig.password,
-  },
+  auth:
+    emailConfig.user && emailConfig.password
+      ? {
+          user: emailConfig.user,
+          pass: emailConfig.password,
+        }
+      : undefined,
+  connectionTimeout: 5000,
+  greetingTimeout: 5000,
+  socketTimeout: 10000,
 });
 
 // ── Markdown renderer ─────────────────────────────────────────
@@ -32,7 +38,15 @@ const loadTemplate = (templatePath: string, replacements: Record<string, string>
 
 // ── sendWelcomeEmail ──────────────────────────────────────────
 
-export const sendWelcomeEmail = async (email: string, displayName: string): Promise<void> => {
+export const sendWelcomeEmail = async (
+  email: string,
+  displayName: string,
+): Promise<boolean> => {
+  if (!emailConfig.host || !emailConfig.user || !emailConfig.password) {
+    console.log("[email] SMTP not configured, skipping welcome email.");
+    return false;
+  }
+
   const templatePath = path.resolve(process.cwd(), "email/welcome-email.md");
 
   const markdownContent = loadTemplate(templatePath, {
@@ -41,18 +55,13 @@ export const sendWelcomeEmail = async (email: string, displayName: string): Prom
 
   const htmlContent = md.render(markdownContent);
 
-  try {
-    const info = await transporter.sendMail({
-      from: `"${emailConfig.fromName}" <${emailConfig.fromEmail}>`,
-      to: email,
-      subject: "¡Bienvenido a Ensenada Transit!",
-      text: markdownContent,
-      html: htmlContent,
-    });
+  await transporter.sendMail({
+    from: `"${emailConfig.fromName}" <${emailConfig.fromEmail}>`,
+    to: email,
+    subject: "¡Bienvenido a Ensenada Transit!",
+    text: markdownContent,
+    html: htmlContent,
+  });
 
-    console.log(`[email] Welcome email sent to ${email} (messageId: ${info.messageId})`);
-  } catch (err) {
-    console.error(`[email] Failed to send welcome email to ${email}:`, err);
-    throw err;
-  }
+  return true;
 };

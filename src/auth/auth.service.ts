@@ -3,7 +3,7 @@ import jwt from "jsonwebtoken";
 import { query } from "../db";
 import { sendWelcomeEmail } from "../email/email.service";
 import { AppError } from "../shared/errors";
-import { JWTPayload, User, UserRole, UserWithHash } from "../types";
+import { JWTPayload, User, UserWithHash } from "../types";
 import { RegisterInput } from "./validators";
 
 const SALT_ROUNDS = 12;
@@ -57,16 +57,20 @@ export const register = async (input: RegisterInput): Promise<{ user: User; toke
     [user.id],
   );
 
-  // Send welcome email — non-blocking, failures do not affect registration
+  const token = generateToken(user);
+
+  // Fire-and-forget welcome email. SMTP must never block registration.
   if (user.email) {
-    try {
-      await sendWelcomeEmail(user.email, user.display_name ?? user.email);
-    } catch (emailErr) {
-      console.error("[auth] Welcome email failed (registration still succeeded):", emailErr);
-    }
+    sendWelcomeEmail(user.email, user.display_name ?? "usuario")
+      .then((sent) => {
+        if (sent) {
+          console.log(`[email] Welcome email sent to ${user.email}`);
+        }
+      })
+      .catch((error) => console.error("[email] Failed to send welcome email", error));
   }
 
-  return { user, token: generateToken(user) };
+  return { user, token };
 };
 
 // ── Login ─────────────────────────────────────────────────────

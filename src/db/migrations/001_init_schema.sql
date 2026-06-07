@@ -32,6 +32,7 @@ CREATE INDEX IF NOT EXISTS idx_users_email  ON users (email);
 CREATE INDEX IF NOT EXISTS idx_users_role   ON users (role);
 CREATE INDEX IF NOT EXISTS idx_users_status ON users (status);
 
+DROP TRIGGER IF EXISTS trg_users_updated_at ON users;
 CREATE TRIGGER trg_users_updated_at
   BEFORE UPDATE ON users
   FOR EACH ROW EXECUTE FUNCTION set_updated_at();
@@ -45,6 +46,7 @@ CREATE TABLE IF NOT EXISTS user_preferences (
   updated_at                 TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+DROP TRIGGER IF EXISTS trg_user_preferences_updated_at ON user_preferences;
 CREATE TRIGGER trg_user_preferences_updated_at
   BEFORE UPDATE ON user_preferences
   FOR EACH ROW EXECUTE FUNCTION set_updated_at();
@@ -63,6 +65,7 @@ CREATE TABLE IF NOT EXISTS routes (
 
 CREATE INDEX IF NOT EXISTS idx_routes_active ON routes (active);
 
+DROP TRIGGER IF EXISTS trg_routes_updated_at ON routes;
 CREATE TRIGGER trg_routes_updated_at
   BEFORE UPDATE ON routes
   FOR EACH ROW EXECUTE FUNCTION set_updated_at();
@@ -82,6 +85,7 @@ CREATE TABLE IF NOT EXISTS route_variants (
 CREATE INDEX IF NOT EXISTS idx_route_variants_route_id  ON route_variants (route_id);
 CREATE INDEX IF NOT EXISTS idx_route_variants_direction ON route_variants (direction);
 
+DROP TRIGGER IF EXISTS trg_route_variants_updated_at ON route_variants;
 CREATE TRIGGER trg_route_variants_updated_at
   BEFORE UPDATE ON route_variants
   FOR EACH ROW EXECUTE FUNCTION set_updated_at();
@@ -102,6 +106,7 @@ CREATE TABLE IF NOT EXISTS stops (
 CREATE INDEX IF NOT EXISTS idx_stops_route_id   ON stops (route_id);
 CREATE INDEX IF NOT EXISTS idx_stops_variant_id ON stops (variant_id);
 
+DROP TRIGGER IF EXISTS trg_stops_updated_at ON stops;
 CREATE TRIGGER trg_stops_updated_at
   BEFORE UPDATE ON stops
   FOR EACH ROW EXECUTE FUNCTION set_updated_at();
@@ -146,6 +151,7 @@ CREATE INDEX IF NOT EXISTS idx_user_reports_user_id  ON user_reports (user_id);
 CREATE INDEX IF NOT EXISTS idx_user_reports_route_id ON user_reports (route_id);
 CREATE INDEX IF NOT EXISTS idx_user_reports_status   ON user_reports (status);
 
+DROP TRIGGER IF EXISTS trg_user_reports_updated_at ON user_reports;
 CREATE TRIGGER trg_user_reports_updated_at
   BEFORE UPDATE ON user_reports
   FOR EACH ROW EXECUTE FUNCTION set_updated_at();
@@ -168,6 +174,7 @@ CREATE INDEX IF NOT EXISTS idx_driver_sessions_driver_id ON driver_sessions (dri
 CREATE INDEX IF NOT EXISTS idx_driver_sessions_status    ON driver_sessions (status);
 CREATE INDEX IF NOT EXISTS idx_driver_sessions_bus_id    ON driver_sessions (bus_id);
 
+DROP TRIGGER IF EXISTS trg_driver_sessions_updated_at ON driver_sessions;
 CREATE TRIGGER trg_driver_sessions_updated_at
   BEFORE UPDATE ON driver_sessions
   FOR EACH ROW EXECUTE FUNCTION set_updated_at();

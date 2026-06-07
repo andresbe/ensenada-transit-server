@@ -64,7 +64,7 @@ Full-featured Node.js + Express backend for the Ensenada Transit app. Handles au
 
 ### Installation
 
-```bash
+```bash change
 git clone https://github.com/andresbe/ensenada-transit-server.git
 cd ensenada-transit-server
 npm install

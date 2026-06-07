@@ -1,13 +1,15 @@
 {
-  "name": "ensenada-transit-location-service",
-  "version": "0.1.0",
-  "description": "HTTP polling location service for the Ensenada Transit MVP.",
+  "name": "ensenada-transit-server",
+  "version": "1.0.0",
+  "description": "Full backend for Ensenada Transit – auth, routes, tracking, and more.",
   "main": "dist/server.js",
   "scripts": {
     "dev": "ts-node-dev --respawn --transpile-only src/server.ts",
     "build": "tsc",
     "start": "node dist/server.js",
-    "typecheck": "tsc --noEmit"
+    "migrate": "node -e \"require('dotenv').config(); const { Pool } = require('pg'); const fs = require('fs'); const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false }); pool.query(fs.readFileSync('src/db/migrations/001_init_schema.sql', 'utf8')).then(() => { console.log('Migration complete'); pool.end(); }).catch(e => { console.error(e); pool.end(); process.exit(1); });\"",
+    "lint": "eslint 'src/**/*.ts'",
+    "type-check": "tsc --noEmit"
   },
   "keywords": [
     "ensenada",
@@ -17,14 +19,21 @@
   ],
   "license": "UNLICENSED",
   "dependencies": {
+    "bcrypt": "^5.1.1",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
-    "express": "^4.21.2"
+    "express": "^4.21.2",
+    "jsonwebtoken": "^9.0.2",
+    "pg": "^8.13.1",
+    "redis": "^4.7.0"
   },
   "devDependencies": {
+    "@types/bcrypt": "^5.0.2",
     "@types/cors": "^2.8.17",
     "@types/express": "^4.17.21",
+    "@types/jsonwebtoken": "^9.0.7",
     "@types/node": "^22.10.2",
+    "@types/pg": "^8.11.10",
     "ts-node-dev": "^2.0.0",
     "typescript": "^5.7.2"
   }

@@ -25,7 +25,7 @@ const md = new MarkdownIt();
 const loadTemplate = (templatePath: string, replacements: Record<string, string>): string => {
   const raw = fs.readFileSync(templatePath, "utf8");
   return Object.entries(replacements).reduce(
-    (content, [key, value]) => content.replaceAll(`{{${key}}}`, value),
+    (content, [key, value]) => content.split(`{{${key}}}`).join(value),
     raw,
   );
 };

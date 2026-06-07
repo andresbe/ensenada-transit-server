@@ -58,10 +58,12 @@ export const register = async (input: RegisterInput): Promise<{ user: User; toke
   );
 
   // Send welcome email — non-blocking, failures do not affect registration
-  try {
-    await sendWelcomeEmail(user.email, user.display_name ?? user.email);
-  } catch (emailErr) {
-    console.error("[auth] Welcome email failed (registration still succeeded):", emailErr);
+  if (user.email) {
+    try {
+      await sendWelcomeEmail(user.email, user.display_name ?? user.email);
+    } catch (emailErr) {
+      console.error("[auth] Welcome email failed (registration still succeeded):", emailErr);
+    }
   }
 
   return { user, token: generateToken(user) };

@@ -64,8 +64,9 @@ trackingRouter.post(
     try {
       const location = locationsService.updateLocation(payload);
 
-      // Persist to Redis for cross-process sharing (best-effort)
-      await setLiveBusLocation(payload.busId, location).catch((err) =>
+      // Persist to Redis for cross-process sharing in the background.
+      // The driver update response must not wait on Redis availability.
+      void setLiveBusLocation(payload.busId, location).catch((err) =>
         console.error("[tracking] Redis setLiveBusLocation error:", err),
       );
 

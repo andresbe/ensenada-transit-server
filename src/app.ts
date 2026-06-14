@@ -9,6 +9,7 @@ import { favoritesRouter } from "./favorites/favorites.routes";
 import { reportsRouter } from "./reports/reports.routes";
 import { trackingRouter } from "./tracking/locations.routes";
 import { driverSessionsRouter } from "./driver-sessions/driverSessions.routes";
+import { locationsService } from "./modules/locations/locations.service";
 // Legacy in-memory route geometry endpoints (backward compatibility)
 import { routesRouter as legacyRoutesRouter } from "./modules/routes/routes.routes";
 import { errorHandler, notFoundHandler } from "./shared/errors";
@@ -29,9 +30,9 @@ app.get("/health", (_req, res) => {
 });
 
 // ── Connect Redis (non-blocking – app still starts if Redis is down) ──
-connectRedis().catch((err) =>
-  console.error("[app] Redis connection failed on startup:", err),
-);
+connectRedis()
+  .then(() => locationsService.hydrateFromRedis())
+  .catch((err) => console.error("[app] Redis connection failed on startup:", err));
 
 // ── API routes ────────────────────────────────────────────────
 app.use("/auth", authRouter);

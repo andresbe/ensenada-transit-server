@@ -3,7 +3,7 @@
  * in-memory location service while also persisting bus locations to Redis.
  */
 import { Request, Response, Router } from "express";
-import { setBusLocation } from "../redis/cache";
+import { setLiveBusLocation } from "../redis/cache";
 import { asyncHandler } from "../middleware/errorHandler";
 import { apiRateLimiter } from "../middleware/rateLimiter";
 import { AppError } from "../shared/errors";
@@ -65,8 +65,8 @@ trackingRouter.post(
       const location = locationsService.updateLocation(payload);
 
       // Persist to Redis for cross-process sharing (best-effort)
-      await setBusLocation(payload.busId, location).catch((err) =>
-        console.error("[tracking] Redis setBusLocation error:", err),
+      await setLiveBusLocation(payload.busId, location).catch((err) =>
+        console.error("[tracking] Redis setLiveBusLocation error:", err),
       );
 
       recordLocationUpdateSuccess(
@@ -108,7 +108,7 @@ trackingRouter.get(
   apiRateLimiter,
   asyncHandler(async (req: Request, res: Response) => {
     const includeStale = parseIncludeStale(req.query.includeStale);
-    const buses = locationsService.getLiveBuses(includeStale);
+    const buses = await locationsService.getLiveBuses(includeStale);
     sendSuccess(res, { buses });
   }),
 );
@@ -119,9 +119,10 @@ trackingRouter.get(
   apiRateLimiter,
   asyncHandler(async (req: Request, res: Response) => {
     const includeStale = parseIncludeStale(req.query.includeStale);
-    // Filter by routeId (not routeVariantId) across all variants
-    const allBuses = locationsService.getLiveBuses(includeStale);
-    const buses = allBuses.filter((b) => b.routeId === req.params.routeId);
+    const allBuses = await locationsService.getLiveBuses(includeStale);
+    const buses = allBuses.filter((b) => {
+      return b.routeId === req.params.routeId || b.routeVariantId === req.params.routeId;
+    });
     sendSuccess(res, { routeId: req.params.routeId, buses });
   }),
 );

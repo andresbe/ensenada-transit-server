@@ -3,21 +3,24 @@ import { sendSuccess } from "../../shared/response";
 import { locationsService } from "../locations/locations.service";
 import { parseIncludeStale, validateEtaQuery } from "../locations/locations.validation";
 
-export const getLiveBusesByRouteVariant = (req: Request, res: Response) => {
+export const getLiveBusesByRouteVariant = async (req: Request, res: Response) => {
   const { routeVariantId } = req.params;
   const includeStale = parseIncludeStale(req.query.includeStale);
-  const buses = locationsService.getLiveBusesByRouteVariant(routeVariantId, includeStale);
+  const buses = await locationsService.getLiveBusesByRouteVariant(
+    routeVariantId,
+    includeStale,
+  );
 
-  return sendSuccess(res, {
+  sendSuccess(res, {
     routeVariantId,
     buses,
   });
 };
 
-export const getRouteEta = (req: Request, res: Response) => {
+export const getRouteEta = async (req: Request, res: Response) => {
   const { routeVariantId } = req.params;
   const query = validateEtaQuery(req.query);
-  const eta = locationsService.getEtaForRouteVariant(
+  const eta = await locationsService.getEtaForRouteVariant(
     routeVariantId,
     {
       latitude: query.userLat,
@@ -32,5 +35,5 @@ export const getRouteEta = (req: Request, res: Response) => {
     query.includeStale,
   );
 
-  return sendSuccess(res, eta);
+  sendSuccess(res, eta);
 };

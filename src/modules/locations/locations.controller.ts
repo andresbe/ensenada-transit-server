@@ -27,9 +27,9 @@ export const updateLocation = (req: Request, res: Response) => {
   );
 };
 
-export const getAllLiveBuses = (req: Request, res: Response) => {
+export const getAllLiveBuses = async (req: Request, res: Response) => {
   const includeStale = parseIncludeStale(req.query.includeStale);
-  const buses = locationsService.getLiveBuses(includeStale);
+  const buses = await locationsService.getLiveBuses(includeStale);
 
-  return sendSuccess(res, { buses });
+  sendSuccess(res, { buses });
 };

@@ -6,46 +6,99 @@ import { Request, Response, Router } from "express";
 import { setBusLocation } from "../redis/cache";
 import { asyncHandler } from "../middleware/errorHandler";
 import { apiRateLimiter } from "../middleware/rateLimiter";
+import { AppError } from "../shared/errors";
 import { sendSuccess } from "../shared/response";
 import { locationsService } from "../modules/locations/locations.service";
+import { LocationUpdateRequest } from "../modules/locations/locations.types";
 import {
   parseIncludeStale,
   validateLocationUpdate,
 } from "../modules/locations/locations.validation";
+import {
+  getRecentLocationUpdates,
+  recordLocationUpdateReceived,
+  recordLocationUpdateServerError,
+  recordLocationUpdateSuccess,
+  recordLocationUpdateValidationError,
+} from "./locationDiagnostics";
 
 export const trackingRouter = Router();
+
+// GET /locations/debug/recent
+trackingRouter.get(
+  "/locations/debug/recent",
+  apiRateLimiter,
+  asyncHandler(async (req: Request, res: Response) => {
+    const debugToken = process.env.LOCATION_DEBUG_TOKEN;
+
+    if (debugToken && req.header("x-debug-token") !== debugToken) {
+      throw new AppError("Invalid or missing debug token.", 403);
+    }
+
+    const updates = getRecentLocationUpdates();
+    sendSuccess(res, {
+      count: updates.length,
+      updates,
+    });
+  }),
+);
 
 // POST /locations/update
 trackingRouter.post(
   "/locations/update",
   apiRateLimiter,
   asyncHandler(async (req: Request, res: Response) => {
-    const payload = validateLocationUpdate(req.body);
-    const location = locationsService.updateLocation(payload);
+    const startMs = Date.now();
+    let payload: LocationUpdateRequest;
 
-    // Persist to Redis for cross-process sharing (best-effort)
-    await setBusLocation(payload.busId, location).catch((err) =>
-      console.error("[tracking] Redis setBusLocation error:", err),
-    );
+    try {
+      payload = validateLocationUpdate(req.body);
+    } catch (error) {
+      const statusCode = error instanceof AppError ? error.statusCode : 400;
+      recordLocationUpdateValidationError(req, error, statusCode);
+      throw error;
+    }
 
-    sendSuccess(
-      res,
-      {
-        busId: location.busId,
-        routeId: location.routeId,
-        routeVariantId: location.routeVariantId,
-        routeVariantDirection: location.routeVariantDirection,
-        updatedAt: location.updatedAt,
-        routeProgressMeters: location.routeProgressMeters,
-        snappedLatitude: location.snappedLatitude,
-        snappedLongitude: location.snappedLongitude,
-        distanceFromRouteMeters: location.distanceFromRouteMeters,
-        avgSpeedMps: location.avgSpeedMps,
-        directionConfidence: location.directionConfidence,
-        etaConfidence: location.etaConfidence,
-      },
-      201,
-    );
+    const diagnosticContext = recordLocationUpdateReceived(req, payload);
+
+    try {
+      const location = locationsService.updateLocation(payload);
+
+      // Persist to Redis for cross-process sharing (best-effort)
+      await setBusLocation(payload.busId, location).catch((err) =>
+        console.error("[tracking] Redis setBusLocation error:", err),
+      );
+
+      recordLocationUpdateSuccess(
+        payload,
+        location,
+        diagnosticContext,
+        Date.now() - startMs,
+      );
+
+      sendSuccess(
+        res,
+        {
+          busId: location.busId,
+          routeId: location.routeId,
+          routeVariantId: location.routeVariantId,
+          routeVariantDirection: location.routeVariantDirection,
+          updatedAt: location.updatedAt,
+          routeProgressMeters: location.routeProgressMeters,
+          snappedLatitude: location.snappedLatitude,
+          snappedLongitude: location.snappedLongitude,
+          distanceFromRouteMeters: location.distanceFromRouteMeters,
+          avgSpeedMps: location.avgSpeedMps,
+          directionConfidence: location.directionConfidence,
+          etaConfidence: location.etaConfidence,
+        },
+        201,
+      );
+    } catch (error) {
+      const statusCode = error instanceof AppError ? error.statusCode : 500;
+      recordLocationUpdateServerError(req, error, statusCode);
+      throw error;
+    }
   }),
 );
 

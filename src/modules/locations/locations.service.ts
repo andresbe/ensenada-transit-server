@@ -1,4 +1,5 @@
 import { env } from "../../config/env";
+import { getLiveBusLocations } from "../../redis/cache";
 import { haversineDistanceMeters } from "../../shared/geo/geometry";
 import { routeGeometryService } from "../routes/routeGeometry.service";
 import {
@@ -169,6 +170,32 @@ const filterStale = (buses: LiveBus[], includeStale: boolean): LiveBus[] => {
   return includeStale ? buses : buses.filter((bus) => !bus.isStale);
 };
 
+const mergeLocationsByNewestUpdate = (
+  locations: LiveBusLocation[],
+): LiveBusLocation[] => {
+  const merged = new Map<string, LiveBusLocation>();
+
+  for (const location of locations) {
+    const current = merged.get(location.busId);
+
+    if (!current || location.updatedAt >= current.updatedAt) {
+      merged.set(location.busId, location);
+    }
+  }
+
+  return Array.from(merged.values());
+};
+
+const putLocationsInMemory = (locations: LiveBusLocation[]) => {
+  for (const location of locations) {
+    const current = locationsByBusId.get(location.busId);
+
+    if (!current || location.updatedAt >= current.updatedAt) {
+      locationsByBusId.set(location.busId, location);
+    }
+  }
+};
+
 export const locationsService = {
   updateLocation(payload: LocationUpdateRequest): LiveBusLocation {
     const updatedAt = Date.now();
@@ -210,25 +237,46 @@ export const locationsService = {
     return storedLocation;
   },
 
-  getLiveBuses(includeStale = false): LiveBus[] {
+  async hydrateFromRedis(): Promise<number> {
+    const redisLocations = await getLiveBusLocations();
+    putLocationsInMemory(redisLocations);
+    console.log("[locations] Hydrated live buses from Redis", {
+      count: redisLocations.length,
+    });
+    return redisLocations.length;
+  },
+
+  async getLiveBuses(includeStale = false): Promise<LiveBus[]> {
     const now = Date.now();
-    const buses = Array.from(locationsByBusId.values()).map((location) =>
-      toLiveBus(location, now),
+    const redisLocations = await getLiveBusLocations();
+    putLocationsInMemory(redisLocations);
+
+    const locations = mergeLocationsByNewestUpdate(
+      Array.from(locationsByBusId.values()).concat(redisLocations),
     );
+    const buses = locations.map((location) => toLiveBus(location, now));
 
     return filterStale(buses, includeStale);
   },
 
-  getLiveBusesByRouteVariant(routeVariantId: string, includeStale = false): LiveBus[] {
+  async getLiveBusesByRouteVariant(
+    routeVariantId: string,
+    includeStale = false,
+  ): Promise<LiveBus[]> {
     const now = Date.now();
-    const buses = Array.from(locationsByBusId.values())
+    const redisLocations = await getLiveBusLocations();
+    putLocationsInMemory(redisLocations);
+
+    const buses = mergeLocationsByNewestUpdate(
+      Array.from(locationsByBusId.values()).concat(redisLocations),
+    )
       .filter((location) => location.routeVariantId === routeVariantId)
       .map((location) => toLiveBus(location, now));
 
     return filterStale(buses, includeStale);
   },
 
-  getEtaForRouteVariant(
+  async getEtaForRouteVariant(
     routeVariantId: string,
     userPoint: { latitude: number; longitude: number },
     destinationPoint: { latitude: number; longitude: number } | undefined,
@@ -258,7 +306,7 @@ export const locationsService = {
     const destinationIsAhead =
       destinationSnap === undefined || userSnap.progressMeters < destinationSnap.progressMeters;
 
-    const buses = this.getLiveBusesByRouteVariant(routeVariantId, includeStale)
+    const buses = (await this.getLiveBusesByRouteVariant(routeVariantId, includeStale))
       .map((bus): EtaBus => {
         const hasProgress = bus.routeProgressMeters !== undefined;
         const busProgress = bus.routeProgressMeters ?? userSnap.progressMeters;

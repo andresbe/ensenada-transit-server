@@ -1,3 +1,5 @@
+import { env } from "../config/env";
+import { LiveBusLocation } from "../modules/locations/locations.types";
 import redisClient from "./client";
 
 // ── Generic helpers ───────────────────────────────────────────
@@ -39,7 +41,6 @@ const TTL = {
   ROUTES: 300,       // 5 min
   ROUTE: 300,        // 5 min
   VARIANT: 600,      // 10 min
-  BUS_LOCATION: 90,  // 1.5 min (matches LOCATION_TTL_SECONDS default)
 };
 
 export const routesCacheKey = () => "routes:all";
@@ -47,6 +48,7 @@ export const routeCacheKey = (routeId: string) => `routes:${routeId}`;
 export const variantCacheKey = (variantId: string) => `variants:${variantId}`;
 export const busLocationKey = (busId: string) => `bus:location:${busId}`;
 export const liveBusesKey = () => "buses:live";
+export const liveBusesIndexKey = () => "buses:live:index";
 export const routeLiveBusesKey = (routeId: string) => `buses:live:route:${routeId}`;
 export const rateLimitKey = (prefix: string, identifier: string) =>
   `ratelimit:${prefix}:${identifier}`;
@@ -76,8 +78,104 @@ export const invalidateVariantCache = (variantId: string) =>
 
 export const getBusLocation = <T>(busId: string) =>
   cacheGet<T>(busLocationKey(busId));
-export const setBusLocation = (busId: string, data: unknown, ttlSeconds = TTL.BUS_LOCATION) =>
+export const setBusLocation = (busId: string, data: unknown, ttlSeconds = env.locationTtlMs / 1000) =>
   cacheSet(busLocationKey(busId), data, ttlSeconds);
+
+export const setLiveBusLocation = async (
+  busId: string,
+  location: LiveBusLocation,
+  ttlSeconds = env.locationTtlMs / 1000,
+): Promise<void> => {
+  try {
+    await Promise.all([
+      redisClient.set(busLocationKey(busId), JSON.stringify(location), { EX: ttlSeconds }),
+      redisClient.sAdd(liveBusesIndexKey(), busId),
+    ]);
+    console.log("[cache] Live bus location written to Redis", { busId, ttlSeconds });
+  } catch (err) {
+    console.error("[cache] Redis setLiveBusLocation error:", err);
+  }
+};
+
+export const getLiveBusLocation = <T = LiveBusLocation>(busId: string) =>
+  cacheGet<T>(busLocationKey(busId));
+
+export const removeLiveBusLocation = async (busId: string): Promise<void> => {
+  try {
+    await Promise.all([
+      redisClient.del(busLocationKey(busId)),
+      redisClient.sRem(liveBusesIndexKey(), busId),
+    ]);
+  } catch (err) {
+    console.error("[cache] Redis removeLiveBusLocation error:", err);
+  }
+};
+
+export const cleanupLiveBusIndex = async (): Promise<number> => {
+  try {
+    const busIds = await redisClient.sMembers(liveBusesIndexKey());
+    const expiredBusIds: string[] = [];
+
+    await Promise.all(
+      busIds.map(async (busId) => {
+        const exists = await redisClient.exists(busLocationKey(busId));
+        if (!exists) {
+          expiredBusIds.push(busId);
+        }
+      }),
+    );
+
+    if (expiredBusIds.length > 0) {
+      await redisClient.sRem(liveBusesIndexKey(), expiredBusIds);
+      console.log("[cache] Removed expired live bus ids from Redis index", {
+        count: expiredBusIds.length,
+      });
+    }
+
+    return expiredBusIds.length;
+  } catch (err) {
+    console.error("[cache] Redis cleanupLiveBusIndex error:", err);
+    return 0;
+  }
+};
+
+export const getLiveBusLocations = async (): Promise<LiveBusLocation[]> => {
+  try {
+    const busIds = await redisClient.sMembers(liveBusesIndexKey());
+
+    if (busIds.length === 0) {
+      return [];
+    }
+
+    const locations: LiveBusLocation[] = [];
+    const expiredBusIds: string[] = [];
+
+    await Promise.all(
+      busIds.map(async (busId) => {
+        const location = await getLiveBusLocation<LiveBusLocation>(busId);
+
+        if (!location) {
+          expiredBusIds.push(busId);
+          return;
+        }
+
+        locations.push(location);
+      }),
+    );
+
+    if (expiredBusIds.length > 0) {
+      await redisClient.sRem(liveBusesIndexKey(), expiredBusIds);
+      console.log("[cache] Removed expired live bus ids from Redis index", {
+        count: expiredBusIds.length,
+      });
+    }
+
+    return locations;
+  } catch (err) {
+    console.error("[cache] Redis getLiveBusLocations error:", err);
+    return [];
+  }
+};
 
 // ── Rate limiting ─────────────────────────────────────────────
 

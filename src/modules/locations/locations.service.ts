@@ -8,6 +8,7 @@ import {
   LiveBus,
   LiveBusLocation,
   LocationUpdateRequest,
+  TripPhase,
 } from "./locations.types";
 
 const maxHistoryPointsPerBus = 10;
@@ -15,6 +16,11 @@ const maxHistoryAgeMs = 5 * 60 * 1000;
 const defaultUrbanBusSpeedMps = 5.5;
 const maxReasonableBusSpeedMps = 25;
 const offRouteLowConfidenceThresholdMeters = 80;
+const offRouteTripPhaseThresholdMeters = 150;
+const nearEndProgressRatio = 0.9;
+const completedProgressRatio = 0.97;
+const nearEndRemainingMeters = 250;
+const completedRemainingMeters = 80;
 
 const locationsByBusId = new Map<string, LiveBusLocation>();
 const busLocationHistory = new Map<string, LiveBusLocation[]>();
@@ -37,7 +43,7 @@ const calculateAverageSpeedMps = (
   currentLocation: LiveBusLocation,
   history: LiveBusLocation[],
 ): number => {
-  if (currentLocation.routeProgressMeters === undefined) {
+  if (currentLocation.routeProgressMeters === null) {
     return isValidGpsSpeed(currentLocation.speed)
       ? currentLocation.speed
       : defaultUrbanBusSpeedMps;
@@ -51,8 +57,8 @@ const calculateAverageSpeedMps = (
     const current = points[index];
 
     if (
-      previous.routeProgressMeters === undefined ||
-      current.routeProgressMeters === undefined
+      previous.routeProgressMeters === null ||
+      current.routeProgressMeters === null
     ) {
       continue;
     }
@@ -86,13 +92,13 @@ const calculateDirectionConfidence = (
   currentLocation: LiveBusLocation,
   history: LiveBusLocation[],
 ): Confidence => {
-  if (currentLocation.routeProgressMeters === undefined) {
+  if (currentLocation.routeProgressMeters === null) {
     return "low";
   }
 
   const progressValues = [...history.slice(-3), currentLocation]
     .map((location) => location.routeProgressMeters)
-    .filter((progress): progress is number => progress !== undefined);
+    .filter((progress): progress is number => progress !== null);
 
   if (progressValues.length < 2) {
     return "medium";
@@ -117,7 +123,7 @@ const calculateDirectionConfidence = (
 
 const calculateEtaConfidence = (location: LiveBusLocation): Confidence => {
   if (
-    location.distanceFromRouteMeters !== undefined &&
+    location.distanceFromRouteMeters !== null &&
     location.distanceFromRouteMeters > offRouteLowConfidenceThresholdMeters
   ) {
     return "low";
@@ -139,6 +145,68 @@ const busPoint = (bus: LiveBus): { latitude: number; longitude: number } => ({
   longitude: bus.longitude,
 });
 
+const calculateTripPhase = (
+  progressRatio: number | null,
+  progressRemainingMeters: number | null,
+  distanceFromRouteMeters: number | null,
+): TripPhase => {
+  if (
+    distanceFromRouteMeters !== null &&
+    distanceFromRouteMeters > offRouteTripPhaseThresholdMeters
+  ) {
+    return "off_route";
+  }
+
+  if (progressRatio === null || progressRemainingMeters === null) {
+    return "unknown";
+  }
+
+  if (
+    progressRatio >= completedProgressRatio &&
+    progressRemainingMeters <= completedRemainingMeters
+  ) {
+    return "completed";
+  }
+
+  if (
+    progressRatio >= nearEndProgressRatio &&
+    progressRemainingMeters <= nearEndRemainingMeters
+  ) {
+    return "near_end";
+  }
+
+  if (progressRatio < 0.05) {
+    return "starting";
+  }
+
+  return "in_progress";
+};
+
+const logProgressDiagnostic = (
+  event: string,
+  location: LiveBusLocation,
+  reason?: string,
+) => {
+  console.log(
+    JSON.stringify({
+      event,
+      busId: location.busId,
+      routeId: location.routeId,
+      routeVariantId: location.routeVariantId,
+      routeVariantDirection: location.routeVariantDirection,
+      latitude: location.latitude,
+      longitude: location.longitude,
+      routeProgressMeters: location.routeProgressMeters,
+      routeTotalDistanceMeters: location.routeTotalDistanceMeters,
+      progressRemainingMeters: location.progressRemainingMeters,
+      progressRatio: location.progressRatio,
+      distanceFromRouteMeters: location.distanceFromRouteMeters,
+      directionConfidence: location.directionConfidence,
+      reason,
+    }),
+  );
+};
+
 const toLiveBus = (location: LiveBusLocation, now = Date.now()): LiveBus => {
   return {
     busId: location.busId,
@@ -154,14 +222,19 @@ const toLiveBus = (location: LiveBusLocation, now = Date.now()): LiveBus => {
     heading: location.heading,
     timestamp: location.timestamp,
     updatedAt: location.updatedAt,
-    routeProgressMeters: location.routeProgressMeters,
-    snappedLatitude: location.snappedLatitude,
-    snappedLongitude: location.snappedLongitude,
-    distanceFromRouteMeters: location.distanceFromRouteMeters,
+    routeProgressMeters: location.routeProgressMeters ?? null,
+    routeTotalDistanceMeters: location.routeTotalDistanceMeters ?? null,
+    progressRemainingMeters: location.progressRemainingMeters ?? null,
+    progressRatio: location.progressRatio ?? null,
+    progressPercent: location.progressPercent ?? null,
+    snappedLatitude: location.snappedLatitude ?? null,
+    snappedLongitude: location.snappedLongitude ?? null,
+    distanceFromRouteMeters: location.distanceFromRouteMeters ?? null,
     avgSpeedMps: location.avgSpeedMps,
     isStopped: location.isStopped,
     directionConfidence: location.directionConfidence,
     etaConfidence: location.etaConfidence,
+    tripPhase: location.tripPhase ?? "unknown",
     isStale: isLocationStale(location, now),
   };
 };
@@ -200,18 +273,48 @@ export const locationsService = {
   updateLocation(payload: LocationUpdateRequest): LiveBusLocation {
     const updatedAt = Date.now();
     const history = pruneHistory(busLocationHistory.get(payload.busId) ?? [], updatedAt);
+    const routeGeometry = routeGeometryService.getRouteGeometry(payload.routeVariantId);
     const routeSnap = routeGeometryService.snapPointToRoute(payload.routeVariantId, {
       latitude: payload.latitude,
       longitude: payload.longitude,
     });
+    const distanceFromRouteMeters = routeSnap?.distanceFromRouteMeters ?? null;
+    const canUseProgress =
+      routeGeometry !== undefined &&
+      routeSnap !== undefined &&
+      distanceFromRouteMeters !== null &&
+      distanceFromRouteMeters <= offRouteTripPhaseThresholdMeters;
+    const routeProgressMeters = canUseProgress ? routeSnap.progressMeters : null;
+    const routeTotalDistanceMeters = routeGeometry?.totalDistanceMeters ?? null;
+    const progressRemainingMeters =
+      routeProgressMeters !== null && routeTotalDistanceMeters !== null
+        ? Math.max(0, routeTotalDistanceMeters - routeProgressMeters)
+        : null;
+    const progressRatio =
+      routeProgressMeters !== null &&
+      routeTotalDistanceMeters !== null &&
+      routeTotalDistanceMeters > 0
+        ? Math.max(0, Math.min(1, routeProgressMeters / routeTotalDistanceMeters))
+        : null;
+    const progressPercent = progressRatio === null ? null : progressRatio * 100;
+    const tripPhase = calculateTripPhase(
+      progressRatio,
+      progressRemainingMeters,
+      distanceFromRouteMeters,
+    );
 
     const storedLocation: LiveBusLocation = {
       ...payload,
       updatedAt,
-      routeProgressMeters: routeSnap?.progressMeters,
-      snappedLatitude: routeSnap?.latitude,
-      snappedLongitude: routeSnap?.longitude,
-      distanceFromRouteMeters: routeSnap?.distanceFromRouteMeters,
+      routeProgressMeters,
+      routeTotalDistanceMeters,
+      progressRemainingMeters,
+      progressRatio,
+      progressPercent,
+      snappedLatitude: routeSnap?.latitude ?? null,
+      snappedLongitude: routeSnap?.longitude ?? null,
+      distanceFromRouteMeters,
+      tripPhase,
     };
 
     storedLocation.avgSpeedMps = calculateAverageSpeedMps(storedLocation, history);
@@ -219,13 +322,29 @@ export const locationsService = {
     storedLocation.directionConfidence = calculateDirectionConfidence(storedLocation, history);
 
     if (
-      storedLocation.distanceFromRouteMeters !== undefined &&
+      storedLocation.distanceFromRouteMeters !== null &&
       storedLocation.distanceFromRouteMeters > offRouteLowConfidenceThresholdMeters
     ) {
       storedLocation.directionConfidence = "low";
       storedLocation.etaConfidence = "low";
     } else {
       storedLocation.etaConfidence = calculateEtaConfidence(storedLocation);
+    }
+
+    if (!routeGeometry) {
+      logProgressDiagnostic("route_variant_geometry_missing", storedLocation, "geometry_missing");
+    } else if (tripPhase === "off_route") {
+      logProgressDiagnostic("bus_off_route", storedLocation, "distance_from_route_threshold");
+    } else {
+      logProgressDiagnostic("route_progress_calculated", storedLocation);
+
+      if (tripPhase === "near_end") {
+        logProgressDiagnostic("near_end_detected", storedLocation);
+      }
+
+      if (tripPhase === "completed") {
+        logProgressDiagnostic("completed_candidate_detected", storedLocation);
+      }
     }
 
     locationsByBusId.set(payload.busId, storedLocation);
@@ -308,10 +427,10 @@ export const locationsService = {
 
     const buses = (await this.getLiveBusesByRouteVariant(routeVariantId, includeStale))
       .map((bus): EtaBus => {
-        const hasProgress = bus.routeProgressMeters !== undefined;
+        const hasProgress = bus.routeProgressMeters !== null;
         const busProgress = bus.routeProgressMeters ?? userSnap.progressMeters;
         const busIsFarFromRoute =
-          bus.distanceFromRouteMeters !== undefined &&
+          bus.distanceFromRouteMeters !== null &&
           bus.distanceFromRouteMeters > offRouteLowConfidenceThresholdMeters;
         const rawDistanceToUserMeters = userSnap.progressMeters - busProgress;
         const routeDistanceToUserMeters = Math.abs(rawDistanceToUserMeters);

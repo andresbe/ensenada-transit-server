@@ -18,17 +18,29 @@ export interface LocationUpdateRequest {
 }
 
 export type Confidence = "high" | "medium" | "low";
+export type TripPhase =
+  | "starting"
+  | "in_progress"
+  | "near_end"
+  | "completed"
+  | "off_route"
+  | "unknown";
 
 export interface LiveBusLocation extends LocationUpdateRequest {
   updatedAt: number;
-  routeProgressMeters?: number;
-  snappedLatitude?: number;
-  snappedLongitude?: number;
-  distanceFromRouteMeters?: number;
+  routeProgressMeters: number | null;
+  routeTotalDistanceMeters: number | null;
+  progressRemainingMeters: number | null;
+  progressRatio: number | null;
+  progressPercent: number | null;
+  snappedLatitude: number | null;
+  snappedLongitude: number | null;
+  distanceFromRouteMeters: number | null;
   avgSpeedMps?: number;
   isStopped?: boolean;
   directionConfidence?: Confidence;
   etaConfidence?: Confidence;
+  tripPhase: TripPhase;
 }
 
 export interface LiveBus {
@@ -45,14 +57,19 @@ export interface LiveBus {
   heading?: number;
   timestamp: number;
   updatedAt: number;
-  routeProgressMeters?: number;
-  snappedLatitude?: number;
-  snappedLongitude?: number;
-  distanceFromRouteMeters?: number;
+  routeProgressMeters: number | null;
+  routeTotalDistanceMeters: number | null;
+  progressRemainingMeters: number | null;
+  progressRatio: number | null;
+  progressPercent: number | null;
+  snappedLatitude: number | null;
+  snappedLongitude: number | null;
+  distanceFromRouteMeters: number | null;
   avgSpeedMps?: number;
   isStopped?: boolean;
   directionConfidence?: Confidence;
   etaConfidence?: Confidence;
+  tripPhase: TripPhase;
   isStale: boolean;
 }
 

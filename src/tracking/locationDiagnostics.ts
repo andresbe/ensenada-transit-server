@@ -41,12 +41,15 @@ export interface LocationDebugSummary {
   heading?: number;
   clientTimestamp?: number;
   gapSeconds?: number;
-  routeProgressMeters?: number;
-  routeTotalDistanceMeters?: number;
-  progressRemainingMeters?: number;
-  distanceFromRouteMeters?: number;
+  routeProgressMeters?: number | null;
+  routeTotalDistanceMeters?: number | null;
+  progressRemainingMeters?: number | null;
+  progressRatio?: number | null;
+  progressPercent?: number | null;
+  distanceFromRouteMeters?: number | null;
   directionConfidence?: string;
   etaConfidence?: string;
+  tripPhase?: string;
   shouldSwitchVariant?: unknown;
   nextRouteVariantId?: unknown;
   nextRouteVariantDirection?: unknown;
@@ -280,12 +283,6 @@ export const recordLocationUpdateSuccess = (
   context: LocationDiagnosticContext,
   elapsedMs: number,
 ) => {
-  const progressRemainingMeters =
-    context.routeTotalDistanceMeters !== undefined &&
-    location.routeProgressMeters !== undefined
-      ? Math.max(0, context.routeTotalDistanceMeters - location.routeProgressMeters)
-      : undefined;
-
   const summary: LocationDebugSummary = {
     receivedAt: context.receivedAt,
     busId: payload.busId,
@@ -301,11 +298,14 @@ export const recordLocationUpdateSuccess = (
     clientTimestamp: payload.timestamp,
     gapSeconds: context.gapSeconds,
     routeProgressMeters: location.routeProgressMeters,
-    routeTotalDistanceMeters: context.routeTotalDistanceMeters,
-    progressRemainingMeters,
+    routeTotalDistanceMeters: location.routeTotalDistanceMeters,
+    progressRemainingMeters: location.progressRemainingMeters,
+    progressRatio: location.progressRatio,
+    progressPercent: location.progressPercent,
     distanceFromRouteMeters: location.distanceFromRouteMeters,
     directionConfidence: location.directionConfidence,
     etaConfidence: location.etaConfidence,
+    tripPhase: location.tripPhase,
     shouldSwitchVariant: undefined,
     nextRouteVariantId: undefined,
     nextRouteVariantDirection: undefined,
@@ -323,11 +323,14 @@ export const recordLocationUpdateSuccess = (
     elapsedMs,
     gapSeconds: context.gapSeconds,
     routeProgressMeters: location.routeProgressMeters,
-    routeTotalDistanceMeters: context.routeTotalDistanceMeters,
-    progressRemainingMeters,
+    routeTotalDistanceMeters: location.routeTotalDistanceMeters,
+    progressRemainingMeters: location.progressRemainingMeters,
+    progressRatio: location.progressRatio,
+    progressPercent: location.progressPercent,
     distanceFromRouteMeters: location.distanceFromRouteMeters,
     directionConfidence: location.directionConfidence,
     etaConfidence: location.etaConfidence,
+    tripPhase: location.tripPhase,
     shouldSwitchVariant: undefined,
     nextRouteVariantId: undefined,
     nextRouteVariantDirection: undefined,

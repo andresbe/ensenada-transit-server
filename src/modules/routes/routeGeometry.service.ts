@@ -45,6 +45,8 @@ const supportedRouteVariantIds = [
   "aguilas_89_vuelta",
   "amp_indeco_ida",
   "amp_indeco_vuelta",
+  "gomez_morin_ida",
+  "gomez_morin_vuelta",
 ];
 
 const routeGeometries = new Map<string, RouteGeometry>();

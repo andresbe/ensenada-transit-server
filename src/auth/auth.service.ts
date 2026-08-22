@@ -9,6 +9,8 @@ import { RegisterInput } from "./validators";
 const SALT_ROUNDS = 12;
 const JWT_SECRET = process.env.JWT_SECRET ?? "change_me_in_production";
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN ?? "7d";
+const USER_COLUMNS =
+  "id, email, display_name, photo_url, auth_provider, role, status, assigned_bus_id, assigned_route_id, assigned_route_variant_id, created_at, updated_at";
 
 // ── Token helpers ─────────────────────────────────────────────
 
@@ -45,7 +47,7 @@ export const register = async (input: RegisterInput): Promise<{ user: User; toke
   const result = await query<User>(
     `INSERT INTO users (email, password_hash, display_name, auth_provider, role, status)
      VALUES ($1, $2, $3, 'email', 'user', 'active')
-     RETURNING id, email, display_name, photo_url, auth_provider, role, status, created_at, updated_at`,
+     RETURNING ${USER_COLUMNS}`,
     [input.email, password_hash, input.display_name ?? null],
   );
 
@@ -80,7 +82,7 @@ export const login = async (
   password: string,
 ): Promise<{ user: User; token: string }> => {
   const result = await query<UserWithHash>(
-    `SELECT id, email, password_hash, display_name, photo_url, auth_provider, role, status, created_at, updated_at
+    `SELECT ${USER_COLUMNS}, password_hash
      FROM users WHERE email = $1 AND status = 'active'`,
     [email],
   );
@@ -120,7 +122,7 @@ export const socialAuth = async (
   }
 
   const existing = await query<User>(
-    `SELECT id, email, display_name, photo_url, auth_provider, role, status, created_at, updated_at
+    `SELECT ${USER_COLUMNS}
      FROM users WHERE email = $1`,
     [input.email],
   );
@@ -133,7 +135,7 @@ export const socialAuth = async (
   const result = await query<User>(
     `INSERT INTO users (email, display_name, photo_url, auth_provider, role, status)
      VALUES ($1, $2, $3, $4, 'user', 'active')
-     RETURNING id, email, display_name, photo_url, auth_provider, role, status, created_at, updated_at`,
+     RETURNING ${USER_COLUMNS}`,
     [input.email, input.display_name ?? null, input.photo_url ?? null, input.provider],
   );
 
@@ -149,7 +151,7 @@ export const guestAuth = async (): Promise<{ user: User; token: string }> => {
   const result = await query<User>(
     `INSERT INTO users (auth_provider, role, status)
      VALUES ('guest', 'user', 'active')
-     RETURNING id, email, display_name, photo_url, auth_provider, role, status, created_at, updated_at`,
+     RETURNING ${USER_COLUMNS}`,
   );
 
   const user = result.rows[0];
@@ -162,7 +164,7 @@ export const refreshToken = async (token: string): Promise<{ user: User; token: 
   const payload = validateToken(token);
 
   const result = await query<User>(
-    `SELECT id, email, display_name, photo_url, auth_provider, role, status, created_at, updated_at
+    `SELECT ${USER_COLUMNS}
      FROM users WHERE id = $1 AND status = 'active'`,
     [payload.sub],
   );

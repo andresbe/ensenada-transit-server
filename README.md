@@ -84,7 +84,7 @@ cp .env.example .env
 npm run migrate
 ```
 
-This executes `src/db/migrations/001_init_schema.sql` against your `DATABASE_URL`. The migration is idempotent (`CREATE TABLE IF NOT EXISTS`) and safe to run multiple times.
+This runs all SQL files in `src/db/migrations` against your `DATABASE_URL` in filename order. Current migrations are idempotent and safe to run multiple times.
 
 ### Start development server
 
@@ -122,7 +122,7 @@ ensenada-transit-server/
 │   ├── db/
 │   │   ├── index.ts                  # PostgreSQL connection pool
 │   │   └── migrations/
-│   │       └── 001_init_schema.sql   # Full database schema
+│   │       └── 002_driver_auth_users.sql # Driver auth columns for existing DBs
 │   ├── redis/
 │   │   ├── client.ts                 # Redis client with reconnect strategy
 │   │   └── cache.ts                  # Cache helpers, keys, TTLs, rate limiting
@@ -196,6 +196,7 @@ JWT_EXPIRES_IN=7d                  # Token expiration (default: 7d)
 
 # ── Tracking ──────────────────────────────────────────────────
 LOCATION_TTL_SECONDS=90            # How long a bus location is considered fresh (default: 90)
+LOCATION_UPDATE_AUTH_MODE=optional # optional | required. Use required after all driver apps send JWT.
 
 # ── Email / SMTP ───────────────────────────────────────────────
 SMTP_HOST=smtp.ethereal.email      # SMTP server hostname (default: smtp.ethereal.email)
@@ -208,7 +209,7 @@ SMTP_FROM_NAME=Ensenada Transit    # Sender display name
 
 **Required in production:** `DATABASE_URL`, `JWT_SECRET`
 
-**Optional with defaults:** `PORT`, `NODE_ENV`, `CORS_ORIGIN`, `REDIS_URL`, `JWT_EXPIRES_IN`, `LOCATION_TTL_SECONDS`, `SMTP_HOST`, `SMTP_PORT`, `SMTP_FROM_EMAIL`, `SMTP_FROM_NAME`
+**Optional with defaults:** `PORT`, `NODE_ENV`, `CORS_ORIGIN`, `REDIS_URL`, `JWT_EXPIRES_IN`, `LOCATION_TTL_SECONDS`, `LOCATION_UPDATE_AUTH_MODE`, `SMTP_HOST`, `SMTP_PORT`, `SMTP_FROM_EMAIL`, `SMTP_FROM_NAME`
 
 > The app starts even if Redis is unavailable. Rate limiting and bus location caching degrade gracefully — Redis errors are logged and the request is allowed through.
 
@@ -223,9 +224,42 @@ npm run dev          # Start development server with hot reload (ts-node-dev)
 npm run build        # Compile TypeScript to dist/
 npm start            # Run compiled server from dist/server.js
 npm run migrate      # Run SQL migrations against DATABASE_URL
+npm run create:admin # Create or update an admin user from USER_EMAIL/USER_PASSWORD
+npm run create:driver # Create or update a driver user from USER_EMAIL/USER_PASSWORD
 npm run lint         # Run ESLint on src/**/*.ts
 npm run type-check   # Type-check without emitting files (tsc --noEmit)
 ```
+
+### Create Initial Admin / Driver
+
+Run migrations first:
+
+```bash
+npm run migrate
+```
+
+Create the first administrator:
+
+```bash
+USER_EMAIL=admin@example.com \
+USER_PASSWORD='change-this-password' \
+USER_DISPLAY_NAME='Admin' \
+npm run create:admin
+```
+
+Create a driver account:
+
+```bash
+USER_EMAIL=driver@example.com \
+USER_PASSWORD='change-this-password' \
+USER_DISPLAY_NAME='Chofer Unidad 001' \
+USER_ASSIGNED_BUS_ID=bus-001 \
+USER_ASSIGNED_ROUTE_ID=gomez_morin \
+USER_ASSIGNED_ROUTE_VARIANT_ID=gomez_morin_ida \
+npm run create:driver
+```
+
+The script is idempotent by email: running it again updates the password, role, status, and assignments for that user.
 
 ---
 
@@ -1340,18 +1374,25 @@ Rate limiting is backed by Redis. If Redis is unavailable, the limiter fails ope
 
 ### Authentication
 
-- All write endpoints (except `/auth/*` and `/locations/update`) require a valid JWT in the `Authorization: Bearer <token>` header.
+- All write endpoints (except `/auth/*`) require a valid JWT in the `Authorization: Bearer <token>` header.
+- `/locations/update` uses `optionalAuthMiddleware`. With `LOCATION_UPDATE_AUTH_MODE=optional`, anonymous legacy driver updates are still accepted; with `LOCATION_UPDATE_AUTH_MODE=required`, the endpoint requires `Authorization: Bearer <token>`.
+- Recommended transition: ship updated driver APKs that log in via `/auth/login` and send the JWT on every location update, confirm adoption, then switch `LOCATION_UPDATE_AUTH_MODE=required` in production.
 - Read endpoints for routes and tracking are public.
 - Tokens expire after **7 days** (configurable via `JWT_EXPIRES_IN`).
 - Tokens are signed with HS256 using `JWT_SECRET`.
 
 ### Role-based access
 
+The backend uses a single `users` identity table for app users, drivers, operators, and admins. Role-specific behavior is controlled by `role`; shared account fields such as email, password hash, status, and timestamps stay in one place. Driver assignment fields live on `users` for now because each driver has at most one active unit/route assignment in the current workflow.
+
 | Role | Capabilities |
 |---|---|
 | `user` | Auth, profile, favorites, reports, read routes and tracking |
 | `driver` | Everything `user` can do, plus driver sessions and location updates |
-| `admin` | Everything `driver` can do, plus creating routes and variants |
+| `operator` | Operational back-office role reserved for dispatcher workflows |
+| `admin` | Everything `driver` can do, plus user/driver management and creating routes and variants |
+
+If driver operations later need history, multiple assignments, shifts, licenses, or detailed HR data, add dedicated tables such as `driver_profiles` or `driver_assignments` keyed by `users.id` instead of splitting authentication into separate driver/admin tables.
 
 ### Password security
 
@@ -1363,7 +1404,7 @@ Rate limiting is backed by Redis. If Redis is unavailable, the limiter fails ope
 
 ## Database Schema
 
-The schema is defined in `src/db/migrations/001_init_schema.sql`. All tables use UUIDs as primary keys (generated by `pgcrypto`'s `gen_random_uuid()`). All timestamps are `TIMESTAMPTZ`. An `updated_at` trigger fires automatically on every `UPDATE`.
+The existing database has 9 public tables. Incremental schema changes for this implementation live in `src/db/migrations`. All tables use UUIDs as primary keys where applicable. All timestamps are `TIMESTAMPTZ`.
 
 ---
 
@@ -1377,12 +1418,15 @@ The schema is defined in `src/db/migrations/001_init_schema.sql`. All tables use
 | `display_name` | TEXT | nullable | |
 | `photo_url` | TEXT | nullable | |
 | `auth_provider` | TEXT | NOT NULL, default `'email'` | `email` \| `google` \| `apple` \| `guest` |
-| `role` | TEXT | NOT NULL, default `'user'` | `user` \| `driver` \| `admin` |
+| `role` | TEXT | NOT NULL, default `'user'` | `user` \| `driver` \| `operator` \| `admin` |
 | `status` | TEXT | NOT NULL, default `'active'` | `active` \| `suspended` \| `deleted` |
+| `assigned_bus_id` | TEXT | nullable | Optional bus assignment for driver accounts |
+| `assigned_route_id` | TEXT | nullable | Optional route assignment for driver accounts |
+| `assigned_route_variant_id` | TEXT | nullable | Optional route variant assignment for driver accounts |
 | `created_at` | TIMESTAMPTZ | NOT NULL, default `NOW()` | |
 | `updated_at` | TIMESTAMPTZ | NOT NULL, default `NOW()` | Auto-updated by trigger |
 
-Indexes: `email`, `role`, `status`
+Indexes: `email`, `role`, `status`, `assigned_bus_id`, `assigned_route_id`, `assigned_route_variant_id`
 
 ---
 

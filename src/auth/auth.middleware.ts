@@ -12,7 +12,7 @@ declare global {
   }
 }
 
-const extractBearerToken = (req: Request): string | null => {
+export const extractBearerToken = (req: Request): string | null => {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith("Bearer ")) return null;
   return authHeader.slice(7);
@@ -25,6 +25,23 @@ export const authMiddleware = (req: Request, _res: Response, next: NextFunction)
   if (!token) {
     return next(new AppError("Authentication token is required.", 401));
   }
+  try {
+    req.user = validateToken(token);
+    next();
+  } catch (err) {
+    next(err);
+  }
+};
+
+// ── optionalAuthMiddleware ────────────────────────────────────
+// Attaches req.user when a bearer token is present, but allows anonymous requests.
+export const optionalAuthMiddleware = (req: Request, _res: Response, next: NextFunction): void => {
+  const token = extractBearerToken(req);
+  if (!token) {
+    next();
+    return;
+  }
+
   try {
     req.user = validateToken(token);
     next();

@@ -22,8 +22,19 @@ const parseTtlSeconds = (value: string | undefined): number => {
   return ttl;
 };
 
+const parseLocationAuthMode = (value: string | undefined): "optional" | "required" => {
+  const mode = value ?? "optional";
+
+  if (mode !== "optional" && mode !== "required") {
+    throw new Error("LOCATION_UPDATE_AUTH_MODE must be either 'optional' or 'required'.");
+  }
+
+  return mode;
+};
+
 export const env = {
   port: parsePort(process.env.PORT),
   corsOrigin: process.env.CORS_ORIGIN ?? "*",
   locationTtlMs: parseTtlSeconds(process.env.LOCATION_TTL_SECONDS) * 1000,
+  locationUpdateAuthMode: parseLocationAuthMode(process.env.LOCATION_UPDATE_AUTH_MODE),
 };

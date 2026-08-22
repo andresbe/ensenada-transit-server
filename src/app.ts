@@ -3,6 +3,7 @@ import express from "express";
 import { env } from "./config/env";
 import { connectRedis } from "./redis/client";
 import { authRouter } from "./auth/auth.routes";
+import { adminUsersRouter } from "./admin/users.routes";
 import { usersRouter } from "./users/users.routes";
 import { dbRoutesRouter } from "./routes/routes.routes";
 import { favoritesRouter } from "./favorites/favorites.routes";
@@ -36,6 +37,7 @@ connectRedis()
 
 // ── API routes ────────────────────────────────────────────────
 app.use("/auth", authRouter);
+app.use("/admin/users", adminUsersRouter);
 app.use("/users", usersRouter);
 app.use("/db-routes", dbRoutesRouter);
 app.use("/favorites", favoritesRouter);

@@ -3,6 +3,7 @@
  * in-memory location service while also persisting bus locations to Redis.
  */
 import { Request, Response, Router } from "express";
+import { optionalAuthMiddleware } from "../auth/auth.middleware";
 import { setLiveBusLocation } from "../redis/cache";
 import { asyncHandler } from "../middleware/errorHandler";
 import { apiRateLimiter } from "../middleware/rateLimiter";
@@ -21,6 +22,7 @@ import {
   recordLocationUpdateSuccess,
   recordLocationUpdateValidationError,
 } from "./locationDiagnostics";
+import { validateLocationUpdateAuth } from "./locationAuth";
 
 export const trackingRouter = Router();
 
@@ -47,6 +49,7 @@ trackingRouter.get(
 trackingRouter.post(
   "/locations/update",
   apiRateLimiter,
+  optionalAuthMiddleware,
   asyncHandler(async (req: Request, res: Response) => {
     const startMs = Date.now();
     let payload: LocationUpdateRequest;
@@ -62,6 +65,8 @@ trackingRouter.post(
     const diagnosticContext = recordLocationUpdateReceived(req, payload);
 
     try {
+      await validateLocationUpdateAuth(req, payload);
+
       const location = locationsService.updateLocation(payload);
 
       // Persist to Redis for cross-process sharing in the background.

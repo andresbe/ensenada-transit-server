@@ -1,7 +1,7 @@
 // ── User ──────────────────────────────────────────────────────
 
 export type AuthProvider = "email" | "google" | "apple" | "guest";
-export type UserRole = "user" | "driver" | "admin";
+export type UserRole = "user" | "driver" | "operator" | "admin";
 export type UserStatus = "active" | "suspended" | "deleted";
 
 export interface User {
@@ -12,6 +12,9 @@ export interface User {
   auth_provider: AuthProvider;
   role: UserRole;
   status: UserStatus;
+  assigned_bus_id: string | null;
+  assigned_route_id: string | null;
+  assigned_route_variant_id: string | null;
   created_at: Date;
   updated_at: Date;
 }

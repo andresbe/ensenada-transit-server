@@ -2,11 +2,14 @@ import { query } from "../db";
 import { AppError } from "../shared/errors";
 import { User, UserPreferences } from "../types";
 
+export const USER_COLUMNS =
+  "id, email, display_name, photo_url, auth_provider, role, status, assigned_bus_id, assigned_route_id, assigned_route_variant_id, created_at, updated_at";
+
 // ── Get user by id ────────────────────────────────────────────
 
 export const getUserById = async (id: string): Promise<User> => {
   const result = await query<User>(
-    `SELECT id, email, display_name, photo_url, auth_provider, role, status, created_at, updated_at
+    `SELECT ${USER_COLUMNS}
      FROM users WHERE id = $1 AND status != 'deleted'`,
     [id],
   );
@@ -45,7 +48,7 @@ export const updateUser = async (id: string, input: UpdateUserInput): Promise<Us
   const result = await query<User>(
     `UPDATE users SET ${fields.join(", ")}
      WHERE id = $${idx} AND status != 'deleted'
-     RETURNING id, email, display_name, photo_url, auth_provider, role, status, created_at, updated_at`,
+     RETURNING ${USER_COLUMNS}`,
     values,
   );
 

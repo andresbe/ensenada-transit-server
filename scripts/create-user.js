@@ -5,7 +5,7 @@ const bcrypt = require("bcrypt");
 const { Pool } = require("pg");
 
 const SALT_ROUNDS = 12;
-const VALID_ROLES = new Set(["admin", "driver", "operator", "user"]);
+const VALID_ROLES = new Set(["admin", "driver", "user"]);
 
 function requireEnv(name) {
   const value = process.env[name];
@@ -26,15 +26,12 @@ async function main() {
   const role = requireEnv("USER_ROLE");
 
   if (!VALID_ROLES.has(role)) {
-    throw new Error("USER_ROLE must be one of: admin, driver, operator, user.");
+    throw new Error("USER_ROLE must be one of: admin, driver, user.");
   }
 
   const email = requireEnv("USER_EMAIL").toLowerCase();
   const password = requireEnv("USER_PASSWORD");
   const displayName = optionalEnv("USER_DISPLAY_NAME");
-  const assignedBusId = optionalEnv("USER_ASSIGNED_BUS_ID");
-  const assignedRouteId = optionalEnv("USER_ASSIGNED_ROUTE_ID");
-  const assignedRouteVariantId = optionalEnv("USER_ASSIGNED_ROUTE_VARIANT_ID");
   const pool = new Pool({
     connectionString: requireEnv("DATABASE_URL"),
     ssl: process.env.NODE_ENV === "production" ? { rejectUnauthorized: false } : false,
@@ -49,29 +46,20 @@ async function main() {
          display_name,
          auth_provider,
          role,
-         status,
-         assigned_bus_id,
-         assigned_route_id,
-         assigned_route_variant_id
+         status
        )
-       VALUES ($1, $2, $3, 'email', $4, 'active', $5, $6, $7)
+       VALUES ($1, $2, $3, 'email', $4, 'active')
        ON CONFLICT (email) DO UPDATE SET
          password_hash = EXCLUDED.password_hash,
          display_name = COALESCE(EXCLUDED.display_name, users.display_name),
          role = EXCLUDED.role,
-         status = 'active',
-         assigned_bus_id = EXCLUDED.assigned_bus_id,
-         assigned_route_id = EXCLUDED.assigned_route_id,
-         assigned_route_variant_id = EXCLUDED.assigned_route_variant_id
-       RETURNING id, email, display_name, role, status, assigned_bus_id, assigned_route_id, assigned_route_variant_id`,
+         status = 'active'
+       RETURNING id, email, display_name, role, status`,
       [
         email,
         passwordHash,
         displayName,
         role,
-        assignedBusId,
-        assignedRouteId,
-        assignedRouteVariantId,
       ],
     );
 

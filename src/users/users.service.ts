@@ -3,7 +3,7 @@ import { AppError } from "../shared/errors";
 import { User, UserPreferences } from "../types";
 
 export const USER_COLUMNS =
-  "id, email, display_name, photo_url, auth_provider, role, status, assigned_bus_id, assigned_route_id, assigned_route_variant_id, created_at, updated_at";
+  "id, email, display_name, photo_url, auth_provider, role, status, created_at, updated_at";
 
 // ── Get user by id ────────────────────────────────────────────
 

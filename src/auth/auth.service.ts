@@ -10,7 +10,7 @@ const SALT_ROUNDS = 12;
 const JWT_SECRET = process.env.JWT_SECRET ?? "change_me_in_production";
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN ?? "7d";
 const USER_COLUMNS =
-  "id, email, display_name, photo_url, auth_provider, role, status, assigned_bus_id, assigned_route_id, assigned_route_variant_id, created_at, updated_at";
+  "id, email, display_name, photo_url, auth_provider, role, status, created_at, updated_at";
 
 // ── Token helpers ─────────────────────────────────────────────
 
@@ -21,6 +21,63 @@ export const generateToken = (user: User): string => {
     role: user.role,
   };
   return jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN } as jwt.SignOptions);
+};
+
+type ConductorRow = {
+  correo: string;
+  password: string;
+  nombre_usuario: string;
+};
+
+const isBcryptHash = (value: string): boolean => /^\$2[aby]\$\d{2}\$/.test(value);
+
+export const generateDriverToken = (email: string): string => {
+  const payload: JWTPayload = {
+    sub: email,
+    email,
+    role: "driver",
+  };
+  return jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN } as jwt.SignOptions);
+};
+
+export const loginConductor = async (
+  email: string,
+  password: string,
+): Promise<{ user: User; token: string }> => {
+  const result = await query<ConductorRow>(
+    `SELECT correo, password, nombre_usuario
+     FROM conductores
+     WHERE correo = $1`,
+    [email],
+  );
+
+  const conductor = result.rows[0];
+
+  if (!conductor) {
+    throw new AppError("Invalid email or password.", 401);
+  }
+
+  const valid = isBcryptHash(conductor.password)
+    ? await bcrypt.compare(password, conductor.password)
+    : password === conductor.password;
+
+  if (!valid) {
+    throw new AppError("Invalid email or password.", 401);
+  }
+
+  const user: User = {
+    id: conductor.correo,
+    email: conductor.correo,
+    display_name: conductor.nombre_usuario,
+    photo_url: null,
+    auth_provider: "email",
+    role: "driver",
+    status: "active",
+    created_at: new Date(),
+    updated_at: new Date(),
+  };
+
+  return { user, token: generateDriverToken(conductor.correo) };
 };
 
 export const validateToken = (token: string): JWTPayload => {

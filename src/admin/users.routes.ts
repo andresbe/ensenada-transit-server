@@ -11,7 +11,7 @@ import { User, UserRole, UserStatus } from "../types";
 import { USER_COLUMNS } from "../users/users.service";
 
 const SALT_ROUNDS = 12;
-const roles = new Set<UserRole>(["user", "driver", "operator", "admin"]);
+const roles = new Set<UserRole>(["user", "driver", "admin"]);
 const statuses = new Set<UserStatus>(["active", "suspended", "deleted"]);
 
 export const adminUsersRouter = Router();
@@ -41,7 +41,7 @@ const validateRole = (value: unknown, fallback?: UserRole): UserRole => {
   }
 
   if (typeof value !== "string" || !roles.has(value as UserRole)) {
-    throw new AppError("role must be one of: user, driver, operator, admin.", 400);
+    throw new AppError("role must be one of: user, driver, admin.", 400);
   }
 
   return value as UserRole;
@@ -102,9 +102,6 @@ adminUsersRouter.post(
     const password = validatePassword(body.password);
     const role = validateRole(body.role, "driver");
     const displayName = optionalString(body.display_name);
-    const assignedBusId = optionalString(body.assigned_bus_id);
-    const assignedRouteId = optionalString(body.assigned_route_id);
-    const assignedRouteVariantId = optionalString(body.assigned_route_variant_id);
 
     const existing = await query<{ id: string }>("SELECT id FROM users WHERE email = $1", [email]);
 
@@ -120,21 +117,15 @@ adminUsersRouter.post(
          display_name,
          auth_provider,
          role,
-         status,
-         assigned_bus_id,
-         assigned_route_id,
-         assigned_route_variant_id
+         status
        )
-       VALUES ($1, $2, $3, 'email', $4, 'active', $5, $6, $7)
+       VALUES ($1, $2, $3, 'email', $4, 'active')
        RETURNING ${USER_COLUMNS}`,
       [
         email,
         passwordHash,
         displayName ?? null,
         role,
-        assignedBusId ?? null,
-        assignedRouteId ?? null,
-        assignedRouteVariantId ?? null,
       ],
     );
 
@@ -175,18 +166,6 @@ adminUsersRouter.patch(
     const status = validateStatus(body.status);
     if (status !== undefined) {
       addField("status", status);
-    }
-
-    if (body.assigned_bus_id !== undefined) {
-      addField("assigned_bus_id", optionalString(body.assigned_bus_id));
-    }
-
-    if (body.assigned_route_id !== undefined) {
-      addField("assigned_route_id", optionalString(body.assigned_route_id));
-    }
-
-    if (body.assigned_route_variant_id !== undefined) {
-      addField("assigned_route_variant_id", optionalString(body.assigned_route_variant_id));
     }
 
     if (body.password !== undefined) {

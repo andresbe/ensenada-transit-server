@@ -3,11 +3,12 @@ import { sendSuccess } from "../shared/response";
 import {
   guestAuth,
   login,
+  loginConductor,
   refreshToken,
   register,
   socialAuth,
 } from "./auth.service";
-import { validateLoginInput, validateRegisterInput } from "./validators";
+import { validateEmail, validateLoginInput, validateRegisterInput } from "./validators";
 
 export const registerHandler = async (req: Request, res: Response): Promise<void> => {
   const input = validateRegisterInput(req.body);
@@ -18,6 +19,19 @@ export const registerHandler = async (req: Request, res: Response): Promise<void
 export const loginHandler = async (req: Request, res: Response): Promise<void> => {
   const { email, password } = validateLoginInput(req.body);
   const result = await login(email, password);
+  sendSuccess(res, result);
+};
+
+export const conductorLoginHandler = async (req: Request, res: Response): Promise<void> => {
+  const body = req.body as Record<string, unknown>;
+  const email = validateEmail(body.email);
+
+  if (typeof body.password !== "string" || body.password.length === 0) {
+    res.status(400).json({ error: { message: "password is required." } });
+    return;
+  }
+
+  const result = await loginConductor(email, body.password);
   sendSuccess(res, result);
 };
 

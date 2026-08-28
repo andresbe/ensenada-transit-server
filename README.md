@@ -253,13 +253,10 @@ Create a driver account:
 USER_EMAIL=driver@example.com \
 USER_PASSWORD='change-this-password' \
 USER_DISPLAY_NAME='Chofer Unidad 001' \
-USER_ASSIGNED_BUS_ID=bus-001 \
-USER_ASSIGNED_ROUTE_ID=gomez_morin \
-USER_ASSIGNED_ROUTE_VARIANT_ID=gomez_morin_ida \
 npm run create:driver
 ```
 
-The script is idempotent by email: running it again updates the password, role, status, and assignments for that user.
+The script is idempotent by email: running it again updates the password, role, and status for that user.
 
 ---
 
@@ -1383,16 +1380,11 @@ Rate limiting is backed by Redis. If Redis is unavailable, the limiter fails ope
 
 ### Role-based access
 
-The backend uses a single `users` identity table for app users, drivers, operators, and admins. Role-specific behavior is controlled by `role`; shared account fields such as email, password hash, status, and timestamps stay in one place. Driver assignment fields live on `users` for now because each driver has at most one active unit/route assignment in the current workflow.
-
 | Role | Capabilities |
 |---|---|
 | `user` | Auth, profile, favorites, reports, read routes and tracking |
 | `driver` | Everything `user` can do, plus driver sessions and location updates |
-| `operator` | Operational back-office role reserved for dispatcher workflows |
 | `admin` | Everything `driver` can do, plus user/driver management and creating routes and variants |
-
-If driver operations later need history, multiple assignments, shifts, licenses, or detailed HR data, add dedicated tables such as `driver_profiles` or `driver_assignments` keyed by `users.id` instead of splitting authentication into separate driver/admin tables.
 
 ### Password security
 
@@ -1418,15 +1410,12 @@ The existing database has 9 public tables. Incremental schema changes for this i
 | `display_name` | TEXT | nullable | |
 | `photo_url` | TEXT | nullable | |
 | `auth_provider` | TEXT | NOT NULL, default `'email'` | `email` \| `google` \| `apple` \| `guest` |
-| `role` | TEXT | NOT NULL, default `'user'` | `user` \| `driver` \| `operator` \| `admin` |
+| `role` | TEXT | NOT NULL, default `'user'` | `user` \| `driver` \| `admin` |
 | `status` | TEXT | NOT NULL, default `'active'` | `active` \| `suspended` \| `deleted` |
-| `assigned_bus_id` | TEXT | nullable | Optional bus assignment for driver accounts |
-| `assigned_route_id` | TEXT | nullable | Optional route assignment for driver accounts |
-| `assigned_route_variant_id` | TEXT | nullable | Optional route variant assignment for driver accounts |
 | `created_at` | TIMESTAMPTZ | NOT NULL, default `NOW()` | |
 | `updated_at` | TIMESTAMPTZ | NOT NULL, default `NOW()` | Auto-updated by trigger |
 
-Indexes: `email`, `role`, `status`, `assigned_bus_id`, `assigned_route_id`, `assigned_route_variant_id`
+Indexes: `email`, `role`, `status`
 
 ---
 

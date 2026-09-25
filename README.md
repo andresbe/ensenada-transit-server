@@ -225,7 +225,8 @@ npm run dev          # Start development server with hot reload (ts-node-dev)
 npm run build        # Compile TypeScript to dist/
 npm start            # Run compiled server from dist/server.js
 npm run migrate      # Run SQL migrations against DATABASE_URL
-npm run create:admin # Create or update an admin user from USER_EMAIL/USER_PASSWORD
+npm run create:admin # Create an independent admin from ADMIN_EMAIL/ADMIN_PASSWORD
+npm run test:admin   # Build and test independent admin authentication
 npm run create:driver # Create or update a driver user from USER_EMAIL/USER_PASSWORD
 npm run lint         # Run ESLint on src/**/*.ts
 npm run type-check   # Type-check without emitting files (tsc --noEmit)
@@ -242,9 +243,9 @@ npm run migrate
 Create the first administrator:
 
 ```bash
-USER_EMAIL=admin@example.com \
-USER_PASSWORD='change-this-password' \
-USER_DISPLAY_NAME='Admin' \
+ADMIN_EMAIL=admin@example.com \
+ADMIN_PASSWORD='change-this-password' \
+ADMIN_DISPLAY_NAME='Admin' \
 npm run create:admin
 ```
 
@@ -257,7 +258,68 @@ USER_DISPLAY_NAME='Chofer Unidad 001' \
 npm run create:driver
 ```
 
-The script is idempotent by email: running it again updates the password, role, and status for that user.
+The driver script updates an existing user by email. The admin script inserts into
+`admins` and rejects duplicate emails without changing the existing account.
+Neither script prints password hashes. Admin passwords require at least eight
+characters and at most 72 UTF-8 bytes. `ADMIN_DISPLAY_NAME` is optional.
+
+### Independent administrator authentication
+
+Migration `007_create_admins.sql` creates a separate `admins` table with UUID,
+normalized unique email, bcrypt password hash, display name, status,
+token version and creation/update timestamps. It seeds no accounts and does not
+copy or alter existing `users` or `conductores` records. Apply migrations manually
+with `npm run migrate` in the deployed service's SSH shell; migrations are not
+executed automatically by `npm start`. The migration can be rerun safely.
+
+**Transition:** accounts with `users.role = 'admin'` and their old JWTs no longer
+authorize administrative routes. Create the corresponding independent account
+with `npm run create:admin`, then sign in through the new endpoint. The same
+email may exist in both tables; passwords and identities are independent.
+`POST /admin/users` and `PATCH /admin/users/:userId` manage user/driver accounts;
+they cannot create or assign independent admin privileges.
+
+```http
+POST /auth/admin-login
+Content-Type: application/json
+
+{"email":"admin@example.com","password":"your-admin-password"}
+```
+
+Success returns `{ "user": { ... }, "token": "..." }` directly. The public user
+has `id`, `email`, `display_name`, `role: "admin"`, `status`, timestamps,
+`auth_provider: "email"` and `photo_url: null`; it never includes `password_hash`
+or `token_version`. Malformed input returns `400`; invalid credentials or an
+inactive account return the same `401`. The existing auth rate limiter applies
+(five requests per minute per IP when Redis is available).
+
+- `GET /auth/admin/me` returns `{ "user": { ... } }` using `Authorization: Bearer <token>`.
+- `POST /auth/refresh` with `{ "token": "..." }` renews an active admin session.
+- Administrative routes require a signed JWT containing `identityType: "admin"`
+  and a matching active `admins` record. A legacy `role: "admin"` alone is insufficient.
+- Independent admin tokens also authorize driver location updates, but cannot
+  access user-owned profile, favorites, reports or driver-session records. These
+  require a separate user/driver identity because their foreign keys reference `users`.
+- Admin tokens use the existing `JWT_SECRET` and `JWT_EXPIRES_IN` settings.
+
+Changing an admin's password hash or status automatically increments
+`token_version`, invalidating existing tokens on admin access and refresh.
+Suspending and later reactivating an account does not revive old tokens.
+To suspend an account from an administrative SQL session:
+
+```sql
+UPDATE admins SET status = 'suspended' WHERE email = 'admin@example.com';
+```
+
+To revoke sessions without changing the password:
+
+```sql
+UPDATE admins SET token_version = token_version + 1 WHERE email = 'admin@example.com';
+```
+
+`npm run test:admin` exercises HTTP login, rate limiting, profile, refresh,
+authorization, identity separation and revocation using real bcrypt/JWT with
+mock database and rate-limit calls. It does not touch production.
 
 ---
 
@@ -630,7 +692,7 @@ Update the authenticated user's profile and/or preferences. All fields are optio
 
 ## Routes Module
 
-Public read endpoints (no auth required). Admin write endpoints require `role: "admin"`. Rate limited to **100 req/min** per IP.
+Public read endpoints (no auth required). Admin write endpoints require an active independent admin token. Rate limited to **100 req/min** per IP.
 
 > **Important:** The database-backed routes module is mounted at `/db-routes` in the application. Use `/db-routes` as the base path for all endpoints in this section.
 
@@ -1385,7 +1447,7 @@ Rate limiting is backed by Redis. If Redis is unavailable, the limiter fails ope
 |---|---|
 | `user` | Auth, profile, favorites, reports, read routes and tracking |
 | `driver` | Everything `user` can do, plus driver sessions and location updates |
-| `admin` | Everything `driver` can do, plus user/driver management and creating routes and variants |
+| Independent `admin` | User/driver management, creating routes and variants, driver location updates; authenticate through `/auth/admin-login` |
 
 ### Password security
 

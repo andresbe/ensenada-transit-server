@@ -1,5 +1,5 @@
 import { Request, Response, Router } from "express";
-import { authMiddleware } from "../auth/auth.middleware";
+import { authMiddleware, userAccountMiddleware } from "../auth/auth.middleware";
 import { query } from "../db";
 import { asyncHandler } from "../middleware/errorHandler";
 import { apiRateLimiter } from "../middleware/rateLimiter";
@@ -12,7 +12,7 @@ export const reportsRouter = Router();
 const VALID_REPORT_TYPES: ReportType[] = ["crowded", "breakdown", "delay", "other"];
 
 // All reports routes require authentication
-reportsRouter.use(authMiddleware);
+reportsRouter.use(authMiddleware, userAccountMiddleware);
 
 // POST /reports
 reportsRouter.post(

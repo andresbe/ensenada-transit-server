@@ -5,7 +5,7 @@ const bcrypt = require("bcrypt");
 const { Pool } = require("pg");
 
 const SALT_ROUNDS = 12;
-const VALID_ROLES = new Set(["admin", "driver", "user"]);
+const VALID_ROLES = new Set(["driver", "user"]);
 
 function requireEnv(name) {
   const value = process.env[name];
@@ -26,7 +26,7 @@ async function main() {
   const role = requireEnv("USER_ROLE");
 
   if (!VALID_ROLES.has(role)) {
-    throw new Error("USER_ROLE must be one of: admin, driver, user.");
+    throw new Error("USER_ROLE must be driver or user. For admins use npm run create:admin.");
   }
 
   const email = requireEnv("USER_EMAIL").toLowerCase();

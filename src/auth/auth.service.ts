@@ -5,6 +5,7 @@ import { sendWelcomeEmail } from "../email/email.service";
 import { AppError } from "../shared/errors";
 import { JWTPayload, User, UserWithHash } from "../types";
 import { RegisterInput } from "./validators";
+import { adminSession, getActiveAdmin } from "./admin.service";
 
 const SALT_ROUNDS = 12;
 const JWT_SECRET = process.env.JWT_SECRET ?? "change_me_in_production";
@@ -219,6 +220,9 @@ export const guestAuth = async (): Promise<{ user: User; token: string }> => {
 
 export const refreshToken = async (token: string): Promise<{ user: User; token: string }> => {
   const payload = validateToken(token);
+  if (payload.identityType === "admin") {
+    return adminSession(await getActiveAdmin(payload));
+  }
 
   const result = await query<User>(
     `SELECT ${USER_COLUMNS}

@@ -1,5 +1,5 @@
 import { Request, Response, Router } from "express";
-import { authMiddleware } from "../auth/auth.middleware";
+import { authMiddleware, userAccountMiddleware } from "../auth/auth.middleware";
 import { query } from "../db";
 import { asyncHandler } from "../middleware/errorHandler";
 import { apiRateLimiter } from "../middleware/rateLimiter";
@@ -9,7 +9,7 @@ import { sendSuccess } from "../shared/response";
 export const favoritesRouter = Router();
 
 // All favorites routes require authentication
-favoritesRouter.use(authMiddleware);
+favoritesRouter.use(authMiddleware, userAccountMiddleware);
 
 // ── Favorite routes ───────────────────────────────────────────
 

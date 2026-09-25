@@ -119,7 +119,9 @@ export interface UserReport {
 // ── JWT ───────────────────────────────────────────────────────
 
 export interface JWTPayload {
-  sub: string;       // user id
+  identityType?: "admin";
+  tokenVersion?: number;
+  sub: string;       // identity id (admins UUID when identityType is admin)
   email: string | null;
   role: UserRole;
   iat?: number;

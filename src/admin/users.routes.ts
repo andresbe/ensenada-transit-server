@@ -101,6 +101,7 @@ adminUsersRouter.post(
     const email = validateEmail(body.email);
     const password = validatePassword(body.password);
     const role = validateRole(body.role, "driver");
+    if (role === "admin") throw new AppError("Create independent admin accounts with npm run create:admin.", 400);
     const displayName = optionalString(body.display_name);
 
     const existing = await query<{ id: string }>("SELECT id FROM users WHERE email = $1", [email]);
@@ -160,6 +161,7 @@ adminUsersRouter.patch(
     }
 
     if (body.role !== undefined) {
+      if (body.role === "admin") throw new AppError("Admin accounts belong to the admins table.", 400);
       addField("role", validateRole(body.role));
     }
 

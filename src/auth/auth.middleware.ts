@@ -2,6 +2,7 @@ import { NextFunction, Request, Response } from "express";
 import { AppError } from "../shared/errors";
 import { JWTPayload } from "../types";
 import { validateToken } from "./auth.service";
+import { getActiveAdmin } from "./admin.service";
 
 // Extend Express Request to carry the authenticated user payload
 declare global {
@@ -53,8 +54,16 @@ export const optionalAuthMiddleware = (req: Request, _res: Response, next: NextF
 // ── adminMiddleware ───────────────────────────────────────────
 // Must be used after authMiddleware.
 export const adminMiddleware = (req: Request, _res: Response, next: NextFunction): void => {
-  if (!req.user || req.user.role !== "admin") {
+  if (!req.user || req.user.role !== "admin" || req.user.identityType !== "admin") {
     return next(new AppError("Admin access required.", 403));
+  }
+  getActiveAdmin(req.user).then(() => next()).catch(next);
+};
+
+// User-owned records have foreign keys to users, never to admins.
+export const userAccountMiddleware = (req: Request, _res: Response, next: NextFunction): void => {
+  if (req.user?.identityType === "admin") {
+    return next(new AppError("This endpoint requires a user account, not an admin account.", 403));
   }
   next();
 };
@@ -62,6 +71,9 @@ export const adminMiddleware = (req: Request, _res: Response, next: NextFunction
 // ── driverMiddleware ──────────────────────────────────────────
 // Must be used after authMiddleware.
 export const driverMiddleware = (req: Request, _res: Response, next: NextFunction): void => {
+  if (req.user?.identityType === "admin") {
+    return next(new AppError("Driver sessions require a user account.", 403));
+  }
   if (!req.user || (req.user.role !== "driver" && req.user.role !== "admin")) {
     return next(new AppError("Driver access required.", 403));
   }

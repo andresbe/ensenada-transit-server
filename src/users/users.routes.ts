@@ -1,5 +1,5 @@
 import { Request, Response, Router } from "express";
-import { authMiddleware } from "../auth/auth.middleware";
+import { authMiddleware, userAccountMiddleware } from "../auth/auth.middleware";
 import { asyncHandler } from "../middleware/errorHandler";
 import { apiRateLimiter } from "../middleware/rateLimiter";
 import { sendSuccess } from "../shared/response";
@@ -13,6 +13,7 @@ usersRouter.get(
   "/me",
   apiRateLimiter,
   authMiddleware,
+  userAccountMiddleware,
   asyncHandler(async (req: Request, res: Response) => {
     if (!req.user) throw new AppError("Unauthorized.", 401);
     const user = await getUserById(req.user.sub);
@@ -25,6 +26,7 @@ usersRouter.patch(
   "/me",
   apiRateLimiter,
   authMiddleware,
+  userAccountMiddleware,
   asyncHandler(async (req: Request, res: Response) => {
     if (!req.user) throw new AppError("Unauthorized.", 401);
     const body = req.body as {

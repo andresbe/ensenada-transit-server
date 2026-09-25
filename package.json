@@ -12,7 +12,8 @@
     "updates:publish": "node scripts/publish-app-update.js",
     "test:updates": "npm run build && node --test tests/app-updates.test.js",
     "create:user": "node scripts/create-user.js",
-    "create:admin": "USER_ROLE=admin node scripts/create-user.js",
+    "create:admin": "node scripts/create-admin.js",
+    "test:admin": "npm run build && node --test tests/admin-auth.test.js",
     "create:driver": "USER_ROLE=driver node scripts/create-user.js",
     "lint": "eslint 'src/**/*.ts'",
     "type-check": "tsc --noEmit"

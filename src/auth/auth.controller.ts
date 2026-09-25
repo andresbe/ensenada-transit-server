@@ -9,6 +9,21 @@ import {
   socialAuth,
 } from "./auth.service";
 import { validateEmail, validateLoginInput, validateRegisterInput } from "./validators";
+import { loginAdmin, publicAdmin, getActiveAdmin } from "./admin.service";
+import { AppError } from "../shared/errors";
+
+export const adminLoginHandler = async (req: Request, res: Response): Promise<void> => {
+  res.setHeader("Cache-Control", "no-store");
+  const { email, password } = validateLoginInput(req.body);
+  sendSuccess(res, await loginAdmin(email, password));
+};
+
+export const adminMeHandler = async (req: Request, res: Response): Promise<void> => {
+  res.setHeader("Cache-Control", "no-store");
+  if (!req.user) throw new AppError("Unauthorized.", 401);
+  const user = publicAdmin(await getActiveAdmin(req.user));
+  sendSuccess(res, { user });
+};
 
 export const registerHandler = async (req: Request, res: Response): Promise<void> => {
   const input = validateRegisterInput(req.body);
@@ -70,6 +85,7 @@ export const guestHandler = async (_req: Request, res: Response): Promise<void> 
 };
 
 export const refreshHandler = async (req: Request, res: Response): Promise<void> => {
+  res.setHeader("Cache-Control", "no-store");
   const body = req.body as { token?: unknown };
   if (typeof body.token !== "string" || body.token.trim() === "") {
     res.status(400).json({ error: { message: "token is required." } });

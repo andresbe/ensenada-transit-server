@@ -18,6 +18,7 @@ Full-featured Node.js + Express backend for the Ensenada Transit app. Handles au
 - [Favorites Module](#favorites-module)
 - [Reports Module](#reports-module)
 - [Driver Sessions Module](#driver-sessions-module)
+- [Android App Updates](#android-app-updates)
 - [Tracking Module](#tracking-module)
 - [Email Service](#email-service)
 - [Security](#security)
@@ -1725,3 +1726,83 @@ curl "http://localhost:3000/buses/live?includeStale=true"
 - Strict mode is enabled (`"strict": true` in `tsconfig.json`). All code must pass `npm run type-check` with zero errors.
 - Do not use `any`. Use `unknown` and narrow the type explicitly.
 - Run `npm run build` before opening a PR to confirm the compiled output is clean.
+
+## Android App Updates
+
+`GET /updates/android/latest.json` is public (no token or Redis required). It returns the active release for `com.ensenadatransit.driver` directly, without a `data` wrapper. All responses from this endpoint include `Cache-Control: no-cache`. No active release returns `404`; unavailable or invalid database metadata returns `503`.
+
+Manifest shape (replace the example URL, hash and size with real APK values before publishing):
+
+```json
+{
+  "packageName": "com.ensenadatransit.driver",
+  "versionName": "1.0.30",
+  "versionCode": 31,
+  "minSupportedVersionCode": 1,
+  "apkUrl": "https://downloads.example.com/driver-1.0.30-31.apk",
+  "sha256": "<64 hexadecimal characters from the actual APK>",
+  "sizeBytes": 85000000,
+  "releaseNotes": ["Mejoras de estabilidad."]
+}
+```
+
+### Setup and publication
+
+1. Install dependencies (`npm ci`) and run `npm run migrate` against the intended database. Migration `006_create_app_releases.sql` adds the history, publication timestamp, unique package/version code, and one-active-release-per-package index. Apply it before serving the new endpoint.
+2. Build and sign the APK with the existing application's signing key. Generate the manifest using the app's script. Keep `minSupportedVersionCode: 1` for initially optional updates.
+3. Upload the APK to persistent storage with a public, permanent HTTPS URL, such as an R2 bucket with a custom domain. Use a different filename for each version and never overwrite published objects. APK uploads and bucket provisioning are separate from this server; it does not store or proxy APK files. Keep published objects available while clients may still be downloading them. Avoid expiring signed URLs.
+4. Set `DATABASE_URL` and `NODE_ENV` in the administrative environment or local `.env`, following the existing database scripts. Keep database and bucket credentials out of the app and source control.
+5. Publish:
+
+```bash
+npm run updates:publish -- ./latest.json
+```
+
+The npm pre-hook builds TypeScript, so this command requires development dependencies. Run it from an administrative checkout with database access. The script validates the manifest and expected driver package, then streams the public HTTPS download to verify its exact size and SHA-256. HTTPS redirects are limited to five, and the entire download has a ten-minute deadline. It does not inspect APK package metadata or signing certificates: verify those during the Android build/release process.
+
+Only after verification does it open a database transaction, acquire a lock for the package, deactivate the previous release and insert the new active release. Concurrent publishers are serialized; the last successful transaction becomes active. Repeated version codes are rejected, and any failed insert rolls back the previous release's deactivation. Published manifests are immutable through this command. It exits nonzero on failure. A connection failure during commit can leave the outcome uncertain; check the endpoint/history before retrying.
+
+### Recovery
+
+To withdraw the current release without replacement, run this in an administrative PostgreSQL session:
+
+```sql
+BEGIN;
+SELECT pg_advisory_xact_lock(hashtextextended('com.ensenadatransit.driver', 0));
+UPDATE app_releases SET active = FALSE
+WHERE package_name = 'com.ensenadatransit.driver' AND active = TRUE;
+COMMIT;
+```
+
+The endpoint then returns `404`. To restore an existing release, first verify its APK is still downloadable with the recorded hash and size. Use a transaction with the same package lock; the following example restores version code `31` and fails without changing the active release if it does not exist:
+
+```sql
+BEGIN;
+SELECT pg_advisory_xact_lock(hashtextextended('com.ensenadatransit.driver', 0));
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM app_releases
+    WHERE package_name = 'com.ensenadatransit.driver' AND version_code = 31) THEN
+    RAISE EXCEPTION 'Release does not exist';
+  END IF;
+  UPDATE app_releases SET active = FALSE
+    WHERE package_name = 'com.ensenadatransit.driver' AND active = TRUE;
+  UPDATE app_releases SET active = TRUE
+    WHERE package_name = 'com.ensenadatransit.driver' AND version_code = 31;
+END $$;
+COMMIT;
+```
+
+Reactivating older metadata does not downgrade already installed apps. To fix clients that installed a faulty release, publish a corrected APK with a higher version code. Back up PostgreSQL and retain the APK objects independently; restarting or redeploying this server does not recreate releases.
+
+### App configuration and validation
+
+Configure the app build with:
+
+```ini
+EXPO_PUBLIC_APP_UPDATE_URL=https://ensenada-transit-server-production.up.railway.app/updates/android/latest.json
+```
+
+Restart Metro/reload for development and rebuild production APKs to embed this value. Run `npm run test:updates` for local contract, validation, download-integrity and transaction-control tests (database calls are mocked; no production database is touched).
+
+Before rollout, verify on a signed Android build: detection of a higher version, installation with session/settings preserved, corrupt APK rejection, rejection of a different signing key, interrupted downloads, unavailable metadata, and no interruption during a trip. After deployment, verify the public manifest still matches the active database record. These checks require the app, signed APKs, storage, a deployed database and a device; the server tests alone do not validate them.

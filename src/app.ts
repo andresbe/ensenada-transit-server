@@ -15,6 +15,7 @@ import { locationsService } from "./modules/locations/locations.service";
 import { routesRouter as legacyRoutesRouter } from "./modules/routes/routes.routes";
 import { errorHandler, notFoundHandler } from "./shared/errors";
 import { sendSuccess } from "./shared/response";
+import { appUpdatesRouter } from "./app-updates/appUpdates.routes";
 
 export const app = express();
 
@@ -37,6 +38,7 @@ connectRedis()
 
 // ── API routes ────────────────────────────────────────────────
 app.use("/auth", authRouter);
+app.use("/updates", appUpdatesRouter);
 app.use("/admin/users", adminUsersRouter);
 app.use("/users", usersRouter);
 app.use("/db-routes", dbRoutesRouter);

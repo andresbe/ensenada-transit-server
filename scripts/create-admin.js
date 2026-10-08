@@ -1,3 +1,4 @@
+const { databaseOptions } = require("./database-options");
 require("dotenv").config();
 const bcrypt = require("bcrypt");
 const { Pool } = require("pg");
@@ -19,8 +20,7 @@ async function main() {
   if (!process.env.DATABASE_URL?.trim()) throw new Error("DATABASE_URL is required.");
   const passwordHash = await bcrypt.hash(input.password, 12);
   const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
-    ssl: process.env.NODE_ENV === "production" ? { rejectUnauthorized: false } : false,
+    ...databaseOptions(),
     connectionTimeoutMillis: 5000,
   });
   try {

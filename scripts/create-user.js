@@ -1,3 +1,4 @@
+const { databaseOptions } = require("./database-options");
 /* eslint-disable no-console */
 require("dotenv").config();
 
@@ -33,8 +34,7 @@ async function main() {
   const password = requireEnv("USER_PASSWORD");
   const displayName = optionalEnv("USER_DISPLAY_NAME");
   const pool = new Pool({
-    connectionString: requireEnv("DATABASE_URL"),
-    ssl: process.env.NODE_ENV === "production" ? { rejectUnauthorized: false } : false,
+    ...databaseOptions(),
   });
 
   try {

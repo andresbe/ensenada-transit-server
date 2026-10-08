@@ -1,3 +1,5 @@
+import { jwtSecret } from "./tokenConfig";
+import { googleUser } from "./google.service";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import { query } from "../db";
@@ -8,10 +10,10 @@ import { RegisterInput } from "./validators";
 import { adminSession, getActiveAdmin } from "./admin.service";
 
 const SALT_ROUNDS = 12;
-const JWT_SECRET = process.env.JWT_SECRET ?? "change_me_in_production";
+const JWT_SECRET = jwtSecret();
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN ?? "7d";
 const USER_COLUMNS =
-  "id, email, display_name, photo_url, auth_provider, role, status, created_at, updated_at";
+  "id, email, display_name, photo_url, auth_provider, role, status, is_tester, created_at, updated_at";
 
 // ── Token helpers ─────────────────────────────────────────────
 
@@ -25,6 +27,7 @@ export const generateToken = (user: User): string => {
 };
 
 type ConductorRow = {
+  token_version: number;
   correo: string;
   password: string;
   nombre_usuario: string;
@@ -32,9 +35,10 @@ type ConductorRow = {
 
 const isBcryptHash = (value: string): boolean => /^\$2[aby]\$\d{2}\$/.test(value);
 
-export const generateDriverToken = (email: string): string => {
+export const generateDriverToken = (email: string, tokenVersion = 0): string => {
   const payload: JWTPayload = {
     sub: email,
+    tokenVersion,
     email,
     role: "driver",
   };
@@ -46,7 +50,7 @@ export const loginConductor = async (
   password: string,
 ): Promise<{ user: User; token: string }> => {
   const result = await query<ConductorRow>(
-    `SELECT correo, password, nombre_usuario
+    `SELECT correo, password, nombre_usuario, token_version
      FROM conductores
      WHERE correo = $1`,
     [email],
@@ -60,7 +64,7 @@ export const loginConductor = async (
 
   const valid = isBcryptHash(conductor.password)
     ? await bcrypt.compare(password, conductor.password)
-    : password === conductor.password;
+    : false;
 
   if (!valid) {
     throw new AppError("Invalid email or password.", 401);
@@ -78,12 +82,17 @@ export const loginConductor = async (
     updated_at: new Date(),
   };
 
-  return { user, token: generateDriverToken(conductor.correo) };
+  return { user, token: generateDriverToken(conductor.correo, conductor.token_version) };
 };
 
 export const validateToken = (token: string): JWTPayload => {
   try {
-    return jwt.verify(token, JWT_SECRET) as JWTPayload;
+    const payload = jwt.verify(token, JWT_SECRET, { algorithms: ["HS256"] });
+    if (typeof payload === "string" || typeof payload.sub !== "string" || !payload.sub ||
+        !["user", "driver", "admin"].includes(payload.role)) {
+      throw new Error("Invalid token claims.");
+    }
+    return payload as JWTPayload;
   } catch {
     throw new AppError("Invalid or expired token.", 401);
   }
@@ -163,6 +172,7 @@ export const login = async (
 // ── Social auth ───────────────────────────────────────────────
 
 export interface SocialAuthInput {
+  password?: string;
   provider: "google" | "apple";
   provider_token: string;
   email?: string;
@@ -173,33 +183,8 @@ export interface SocialAuthInput {
 export const socialAuth = async (
   input: SocialAuthInput,
 ): Promise<{ user: User; token: string }> => {
-  // In a real implementation you would verify the provider_token with
-  // Google / Apple APIs here. For now we upsert by email.
-  if (!input.email) {
-    throw new AppError("email is required for social auth.", 400);
-  }
-
-  const existing = await query<User>(
-    `SELECT ${USER_COLUMNS}
-     FROM users WHERE email = $1`,
-    [input.email],
-  );
-
-  if (existing.rowCount && existing.rowCount > 0) {
-    const user = existing.rows[0];
-    return { user, token: generateToken(user) };
-  }
-
-  const result = await query<User>(
-    `INSERT INTO users (email, display_name, photo_url, auth_provider, role, status)
-     VALUES ($1, $2, $3, $4, 'user', 'active')
-     RETURNING ${USER_COLUMNS}`,
-    [input.email, input.display_name ?? null, input.photo_url ?? null, input.provider],
-  );
-
-  const user = result.rows[0];
-  await query(`INSERT INTO user_preferences (user_id) VALUES ($1) ON CONFLICT DO NOTHING`, [user.id]);
-
+  if (input.provider !== "google") throw new AppError("This provider is not available.", 503);
+  const user = await googleUser(input.provider_token, input.password);
   return { user, token: generateToken(user) };
 };
 
@@ -222,6 +207,22 @@ export const refreshToken = async (token: string): Promise<{ user: User; token: 
   const payload = validateToken(token);
   if (payload.identityType === "admin") {
     return adminSession(await getActiveAdmin(payload));
+  }
+
+  if (payload.role === "driver" && payload.sub.includes("@")) {
+    const result = await query<ConductorRow>(
+      "SELECT correo,nombre_usuario,token_version FROM conductores WHERE correo=$1", [payload.sub],
+    );
+    const conductor = result.rows[0];
+    if (!conductor || (conductor.token_version ?? 0) !== (payload.tokenVersion ?? 0)) throw new AppError("Driver session expired.", 401);
+    return {
+      user: {
+        id: conductor.correo, email: conductor.correo, display_name: conductor.nombre_usuario,
+        photo_url: null, auth_provider: "email", role: "driver", status: "active",
+        created_at: new Date(), updated_at: new Date(),
+      },
+      token: generateDriverToken(conductor.correo, conductor.token_version),
+    };
   }
 
   const result = await query<User>(

@@ -1,8 +1,10 @@
+import { currentLine } from "../tenancy/context";
 import { NextFunction, Request, Response } from "express";
 import { AppError } from "../shared/errors";
 import { JWTPayload } from "../types";
 import { validateToken } from "./auth.service";
 import { getActiveAdmin } from "./admin.service";
+import { query } from "../db";
 
 // Extend Express Request to carry the authenticated user payload
 declare global {
@@ -19,6 +21,12 @@ export const extractBearerToken = (req: Request): string | null => {
   return authHeader.slice(7);
 };
 
+async function checkDriverVersion(user: JWTPayload) {
+  if (user.role !== "driver" || !user.sub.includes("@")) return;
+  const result = await query("SELECT token_version FROM conductores WHERE correo=$1", [user.sub]);
+  if (!result.rows[0] || (result.rows[0].token_version ?? 0) !== (user.tokenVersion ?? 0)) throw new AppError("La sesión del conductor expiró. Inicia sesión nuevamente.", 401);
+}
+
 // ── authMiddleware ────────────────────────────────────────────
 // Verifies the JWT and attaches the payload to req.user.
 export const authMiddleware = (req: Request, _res: Response, next: NextFunction): void => {
@@ -28,7 +36,7 @@ export const authMiddleware = (req: Request, _res: Response, next: NextFunction)
   }
   try {
     req.user = validateToken(token);
-    next();
+    void checkDriverVersion(req.user).then(() => next()).catch(next);
   } catch (err) {
     next(err);
   }
@@ -45,7 +53,7 @@ export const optionalAuthMiddleware = (req: Request, _res: Response, next: NextF
 
   try {
     req.user = validateToken(token);
-    next();
+    void checkDriverVersion(req.user).then(() => next()).catch(next);
   } catch (err) {
     next(err);
   }
@@ -57,7 +65,10 @@ export const adminMiddleware = (req: Request, _res: Response, next: NextFunction
   if (!req.user || req.user.role !== "admin" || req.user.identityType !== "admin") {
     return next(new AppError("Admin access required.", 403));
   }
-  getActiveAdmin(req.user).then(() => next()).catch(next);
+  getActiveAdmin(req.user).then(admin => {
+    if (!currentLine() && !admin.is_superadmin) throw new AppError("Selecciona una línea autorizada para esta operación.",403);
+    next();
+  }).catch(next);
 };
 
 // User-owned records have foreign keys to users, never to admins.
@@ -65,7 +76,14 @@ export const userAccountMiddleware = (req: Request, _res: Response, next: NextFu
   if (req.user?.identityType === "admin") {
     return next(new AppError("This endpoint requires a user account, not an admin account.", 403));
   }
-  next();
+  if (!req.user || !/^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/i.test(req.user.sub)) {
+    return next(new AppError("This endpoint requires a passenger account.", 403));
+  }
+  query<{status:string}>("SELECT status FROM users WHERE id=$1", [req.user.sub])
+    .then(result => {
+      if (result.rows[0]?.status !== "active") return next(new AppError("User not found or inactive.",401));
+      next();
+    }).catch(next);
 };
 
 // ── driverMiddleware ──────────────────────────────────────────

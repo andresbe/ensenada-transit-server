@@ -1,9 +1,13 @@
+import { registerGpsCheckin } from "../driver-sessions/checkpoints.service";
+import { publicBuses } from "./publicBuses";
+import { canonicalTrackingIds, canonicalRouteId, canonicalVariantId } from "../passengers/identity";
 /**
  * Tracking module – maintains full backward compatibility with the original
  * in-memory location service while also persisting bus locations to Redis.
  */
 import { Request, Response, Router } from "express";
-import { optionalAuthMiddleware } from "../auth/auth.middleware";
+import { authMiddleware, optionalAuthMiddleware, userAccountMiddleware } from "../auth/auth.middleware";
+import { recordBoarding, endBoarding } from "../boardings/service";
 import { setLiveBusLocation } from "../redis/cache";
 import { asyncHandler } from "../middleware/errorHandler";
 import { apiRateLimiter } from "../middleware/rateLimiter";
@@ -23,8 +27,16 @@ import {
   recordLocationUpdateValidationError,
 } from "./locationDiagnostics";
 import { validateLocationUpdateAuth } from "./locationAuth";
+import { routeGeometryService } from "../modules/routes/routeGeometry.service";
 
 export const trackingRouter = Router();
+
+trackingRouter.delete("/boardings/:id", apiRateLimiter, authMiddleware, userAccountMiddleware,
+  asyncHandler(async (req: Request, res: Response) => {
+    await endBoarding(req.user!.sub, req.params.id);
+    sendSuccess(res, { ended: true });
+  }),
+);
 
 // GET /locations/debug/recent
 trackingRouter.get(
@@ -33,7 +45,7 @@ trackingRouter.get(
   asyncHandler(async (req: Request, res: Response) => {
     const debugToken = process.env.LOCATION_DEBUG_TOKEN;
 
-    if (debugToken && req.header("x-debug-token") !== debugToken) {
+    if (!debugToken || req.header("x-debug-token") !== debugToken) {
       throw new AppError("Invalid or missing debug token.", 403);
     }
 
@@ -50,6 +62,7 @@ trackingRouter.post(
   "/locations/update",
   apiRateLimiter,
   optionalAuthMiddleware,
+  (req, res, next) => req.body?.sourceType === "user" ? userAccountMiddleware(req, res, next) : next(),
   asyncHandler(async (req: Request, res: Response) => {
     const startMs = Date.now();
     let payload: LocationUpdateRequest;
@@ -62,11 +75,26 @@ trackingRouter.post(
       throw error;
     }
 
+    if (payload.sourceType === "user") {
+      // Keep passenger coordinates out of the driver diagnostic feed and bus store.
+      payload = {...payload,...await canonicalTrackingIds(payload.routeId,payload.routeVariantId)};
+      const boarding = await recordBoarding(req.user!.sub, payload, req.body.boardingId);
+      sendSuccess(res, { boarding }, 201);
+      return;
+    }
+
     const diagnosticContext = recordLocationUpdateReceived(req, payload);
 
     try {
       await validateLocationUpdateAuth(req, payload);
+      payload = {...payload,...await canonicalTrackingIds(payload.routeId,payload.routeVariantId)};
 
+      await routeGeometryService.ensureRouteGeometry(payload.routeVariantId);
+
+      if (req.user?.role === "driver" && payload.sourceType === "driver") {
+        const activeVariant=await registerGpsCheckin(req.user.sub,payload);
+        if(activeVariant){payload={...payload,...activeVariant};await routeGeometryService.ensureRouteGeometry(payload.routeVariantId);}
+      }
       const location = locationsService.updateLocation(payload);
 
       // Persist to Redis for cross-process sharing in the background.
@@ -120,7 +148,7 @@ trackingRouter.get(
   asyncHandler(async (req: Request, res: Response) => {
     const includeStale = parseIncludeStale(req.query.includeStale);
     const buses = await locationsService.getLiveBuses(includeStale);
-    sendSuccess(res, { buses });
+    sendSuccess(res, { buses: await publicBuses(buses) });
   }),
 );
 
@@ -130,10 +158,11 @@ trackingRouter.get(
   apiRateLimiter,
   asyncHandler(async (req: Request, res: Response) => {
     const includeStale = parseIncludeStale(req.query.includeStale);
+    const routeId = await canonicalVariantId(await canonicalRouteId(req.params.routeId));
     const allBuses = await locationsService.getLiveBuses(includeStale);
     const buses = allBuses.filter((b) => {
-      return b.routeId === req.params.routeId || b.routeVariantId === req.params.routeId;
+      return b.routeId === routeId || b.routeVariantId === routeId;
     });
-    sendSuccess(res, { routeId: req.params.routeId, buses });
+    sendSuccess(res, { routeId: req.params.routeId, buses: await publicBuses(buses) });
   }),
 );

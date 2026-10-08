@@ -1,11 +1,6 @@
+import { currentLine } from "../tenancy/context";
 import { query } from "../db";
 import {
-  getCachedRoute,
-  getCachedRoutes,
-  getCachedVariant,
-  setCachedRoute,
-  setCachedRoutes,
-  setCachedVariant,
 } from "../redis/cache";
 import { AppError } from "../shared/errors";
 import { Route, RouteVariant, Stop } from "../types";
@@ -13,15 +8,12 @@ import { Route, RouteVariant, Stop } from "../types";
 // ── Get all routes ────────────────────────────────────────────
 
 export const getAllRoutes = async (): Promise<Route[]> => {
-  const cached = await getCachedRoutes<Route[]>();
-  if (cached) return cached;
 
   const result = await query<Route>(
-    `SELECT id, name, short_name, color, text_color, active, created_at, updated_at
-     FROM routes WHERE active = TRUE ORDER BY name`,
+    `SELECT id, name, short_name, color, text_color, active, visible_in_app, created_at, updated_at
+     FROM routes WHERE active = TRUE ${currentLine() ? "" : "AND visible_in_app AND (transport_line_id IS NULL OR EXISTS(SELECT 1 FROM transport_lines l WHERE l.id=transport_line_id AND l.active))"} ORDER BY name`,
   );
 
-  await setCachedRoutes(result.rows);
   return result.rows;
 };
 
@@ -32,12 +24,10 @@ export interface RouteWithVariants extends Route {
 }
 
 export const getRouteById = async (routeId: string): Promise<RouteWithVariants> => {
-  const cached = await getCachedRoute<RouteWithVariants>(routeId);
-  if (cached) return cached;
 
   const routeResult = await query<Route>(
-    `SELECT id, name, short_name, color, text_color, active, created_at, updated_at
-     FROM routes WHERE id = $1`,
+    `SELECT id, name, short_name, color, text_color, active, visible_in_app, created_at, updated_at, updated_at::text AS version
+     FROM routes WHERE id = $1 ${currentLine() ? "" : "AND active AND visible_in_app AND (transport_line_id IS NULL OR EXISTS(SELECT 1 FROM transport_lines l WHERE l.id=transport_line_id AND l.active))"}`,
     [routeId],
   );
 
@@ -56,7 +46,6 @@ export const getRouteById = async (routeId: string): Promise<RouteWithVariants> 
     variants: variantsResult.rows,
   };
 
-  await setCachedRoute(routeId, data);
   return data;
 };
 
@@ -70,8 +59,7 @@ export const getVariant = async (
   routeId: string,
   variantId: string,
 ): Promise<VariantWithStops> => {
-  const cached = await getCachedVariant<VariantWithStops>(variantId);
-  if (cached) return cached;
+  await getRouteById(routeId);
 
   const variantResult = await query<RouteVariant>(
     `SELECT id, route_id, name, direction, coordinates, total_distance_meters, created_at, updated_at
@@ -94,7 +82,6 @@ export const getVariant = async (
     stops: stopsResult.rows,
   };
 
-  await setCachedVariant(variantId, data);
   return data;
 };
 

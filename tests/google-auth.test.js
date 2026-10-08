@@ -1,0 +1,48 @@
+const {test}=require('node:test');
+const assert=require('node:assert/strict');
+const {OAuth2Client}=require('google-auth-library');
+const db=require('../dist/db');
+const {googleUser,verifyGoogleIdentity}=require('../dist/auth/google.service');
+
+test('Google login verifies identity and securely links existing passenger accounts',async t=>{
+ const oldVerify=OAuth2Client.prototype.verifyIdToken,oldClient=db.getClient,oldAudience=process.env.GOOGLE_WEB_CLIENT_ID;
+ t.after(()=>{OAuth2Client.prototype.verifyIdToken=oldVerify;db.getClient=oldClient;if(oldAudience===undefined)delete process.env.GOOGLE_WEB_CLIENT_ID;else process.env.GOOGLE_WEB_CLIENT_ID=oldAudience;});
+ let claims={sub:'verified-google-id',email:'PERSON@example.com',email_verified:true,name:'Person'},reject=false,existing=null,collision=null,linked=false,calls=[];
+ OAuth2Client.prototype.verifyIdToken=async function(options){assert.equal(options.audience,'test.apps.googleusercontent.com');if(reject)throw Error('bad signature or expired');return {getPayload:()=>claims};};
+ db.getClient=async()=>({release(){},query:async(sql,params)=>{
+  calls.push({sql,params});
+  if(sql.includes('SELECT subject FROM user_social_identities'))return {rows:linked?[{subject:'another-subject'}]:[]};
+  if(sql.includes('FROM user_social_identities'))return {rows:existing?[existing]:[]};
+  if(sql.includes('lower(email)'))return {rows:collision?[collision]:[]};
+  if(sql.includes('INSERT INTO users('))return {rows:[{id:'new-user',status:'active',role:'user',auth_provider:'google'}]};
+  return {rows:[]};
+ }});
+ delete process.env.GOOGLE_WEB_CLIENT_ID;
+ await assert.rejects(googleUser('token'),{statusCode:503});assert.equal(calls.length,0);
+ process.env.GOOGLE_WEB_CLIENT_ID='test.apps.googleusercontent.com';
+ reject=true;await assert.rejects(googleUser('tampered'),{statusCode:401});assert.equal(calls.length,0);
+ reject=false;claims.email_verified=false;await assert.rejects(googleUser('token'),{statusCode:401});assert.equal(calls.length,0);
+ claims.email_verified=true;
+ assert.equal((await verifyGoogleIdentity('token')).email,'person@example.com');
+ const created=await googleUser('token');assert.equal(created.auth_provider,'google');
+ assert.ok(calls.some(x=>x.sql.includes('INSERT INTO user_social_identities')&&x.params[0]==='verified-google-id'));
+ assert.ok(calls.some(x=>x.sql==='COMMIT'));
+ calls=[];existing={id:'existing-user',status:'active',role:'user'};assert.equal((await googleUser('token')).id,'existing-user');assert.ok(!calls.some(x=>x.sql.includes('INSERT INTO users(')));
+ calls=[];existing={id:'disabled',status:'suspended',role:'user'};await assert.rejects(googleUser('token'),{statusCode:403});assert.ok(calls.some(x=>x.sql==='ROLLBACK'));
+ calls=[];existing=null;collision={id:'password-user',status:'active',role:'user',auth_provider:'email',password_hash:await require('bcrypt').hash('correct-password',4)};
+ await assert.rejects(googleUser('token'),{statusCode:428});
+ await assert.rejects(googleUser('token','wrong-password'),{statusCode:401});
+ assert.ok(!calls.some(x=>x.sql.includes('INSERT INTO user_social_identities')));
+ const confirmed=await googleUser('token','correct-password');
+ assert.equal(confirmed.id,'password-user');assert.equal(confirmed.password_hash,undefined);
+ assert.ok(!calls.some(x=>x.sql.includes('INSERT INTO users(')));
+ calls=[];claims.email='PERSON@gmail.com';
+ assert.equal((await googleUser('token')).id,'password-user');
+ assert.ok(calls.some(x=>x.sql.includes('INSERT INTO user_social_identities')&&x.params[1]==='password-user'));
+ assert.ok(!calls.some(x=>x.sql.includes('UPDATE users')));
+ calls=[];claims.email='person@company.com';claims.hd='company.com';
+ assert.equal((await googleUser('token')).id,'password-user');
+ linked=true;await assert.rejects(googleUser('token'),{statusCode:409});linked=false;
+ collision.status='suspended';await assert.rejects(googleUser('token'),{statusCode:403});
+ collision.status='active';collision.role='admin';await assert.rejects(googleUser('token'),{statusCode:403});
+});

@@ -1,5 +1,11 @@
 # Ensenada Transit Server
 
+Pruebas locales desde el teléfono: `npm run dev:local`. Ver [guía de red local](docs/local-mobile-testing.md).
+
+Revisión de esquema, hallazgos y requisitos de despliegue: [Auditoría de base de datos y seguridad](docs/database-security-audit.md).
+
+Importación para el dashboard: [crear una ruta con GeoJSON mediante `POST /db-routes/import`](docs/route-import.md).
+
 Full-featured Node.js + Express backend for the Ensenada Transit app. Handles authentication, user profiles, route data, real-time bus tracking, favorites, incident reports, and driver sessions — all backed by PostgreSQL and Redis.
 
 ---
@@ -85,7 +91,7 @@ cp .env.example .env
 npm run migrate
 ```
 
-This runs all SQL files in `src/db/migrations` against your `DATABASE_URL` in filename order. Current migrations are idempotent and safe to run multiple times.
+This applies unrecorded SQL files from `src/db/migrations` against `DATABASE_URL`, in filename order. `schema_migrations` records checksums; each migration and its journal entry commit together under an advisory lock. Applied files must not be edited. The first run on an existing database replays the legacy idempotent schema files to initialize the journal. See [Passenger integration](docs/passenger-integration.md) before deployment.
 
 ### Start development server
 
@@ -1868,3 +1874,8 @@ EXPO_PUBLIC_APP_UPDATE_URL=https://ensenada-transit-server-production.up.railway
 Restart Metro/reload for development and rebuild production APKs to embed this value. Run `npm run test:updates` for local contract, validation, download-integrity and transaction-control tests (database calls are mocked; no production database is touched).
 
 Before rollout, verify on a signed Android build: detection of a higher version, installation with session/settings preserved, corrupt APK rejection, rejection of a different signing key, interrupted downloads, unavailable metadata, and no interruption during a trip. After deployment, verify the public manifest still matches the active database record. These checks require the app, signed APKs, storage, a deployed database and a device; the server tests alone do not validate them.
+## Administración por línea
+
+La activación y migración de administradores, rutas, conductores y flota se describen
+en [docs/line-tenancy.md](docs/line-tenancy.md). Requiere la migración 013 y designar
+explícitamente al superadministrador; las cuentas existentes no se elevan automáticamente.

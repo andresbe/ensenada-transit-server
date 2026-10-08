@@ -1,5 +1,7 @@
 import { NextFunction, Request, Response } from "express";
 import { incrementRateLimit } from "../redis/cache";
+import { validateToken } from "../auth/auth.service";
+import { isTesterAccount } from "../users/tester";
 
 interface RateLimiterOptions {
   /** Unique prefix for the Redis key (e.g. "auth", "api") */
@@ -16,6 +18,13 @@ interface RateLimiterOptions {
  */
 export const rateLimiter = (options: RateLimiterOptions) => {
   return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    if(options.prefix === "api") {
+      try {
+        const header = req.headers.authorization;
+        const identity = header?.startsWith("Bearer ") ? validateToken(header.slice(7)) : undefined;
+        if(identity && identity.identityType !== "admin" && await isTesterAccount(identity.sub)) { next(); return; }
+      } catch { /* Invalid tokens or database errors never grant tester privileges. */ }
+    }
     // Use IP address as the identifier; fall back to a generic key
     const identifier =
       (req.headers["x-forwarded-for"] as string | undefined)?.split(",")[0]?.trim() ??

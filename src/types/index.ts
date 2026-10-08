@@ -5,6 +5,7 @@ export type UserRole = "user" | "driver" | "admin";
 export type UserStatus = "active" | "suspended" | "deleted";
 
 export interface User {
+  is_superadmin?: boolean;
   id: string;
   email: string | null;
   display_name: string | null;
@@ -85,7 +86,9 @@ export type DriverSessionStatus = "active" | "ended";
 
 export interface DriverSession {
   id: string;
-  driver_id: string;
+  driver_id: string | null;
+  conductor_id: string | null;
+  vehicle_id: string | null;
   bus_id: string;
   route_id: string | null;
   variant_id: string | null;
@@ -98,7 +101,7 @@ export interface DriverSession {
 
 // ── User report ───────────────────────────────────────────────
 
-export type ReportType = "crowded" | "breakdown" | "delay" | "other";
+export type ReportType = "crowded" | "breakdown" | "delay" | "other" | "stopIssue" | "detour";
 export type ReportStatus = "open" | "reviewed" | "resolved";
 
 export interface UserReport {
@@ -108,6 +111,9 @@ export interface UserReport {
   route_id: string | null;
   variant_id: string | null;
   bus_id: string | null;
+  stop_id: string | null;
+  severity: "low" | "moderate" | "high";
+  client_id: string | null;
   message: string | null;
   latitude: number | null;
   longitude: number | null;

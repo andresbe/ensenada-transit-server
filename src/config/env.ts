@@ -1,6 +1,6 @@
 import dotenv from "dotenv";
 
-dotenv.config();
+dotenv.config({ path: process.env.DOTENV_CONFIG_PATH ?? ".env" });
 
 const parsePort = (value: string | undefined): number => {
   const port = Number(value ?? 3000);
@@ -33,6 +33,7 @@ const parseLocationAuthMode = (value: string | undefined): "optional" | "require
 };
 
 export const env = {
+  host: process.env.HOST ?? "0.0.0.0",
   port: parsePort(process.env.PORT),
   corsOrigin: process.env.CORS_ORIGIN ?? "*",
   locationTtlMs: parseTtlSeconds(process.env.LOCATION_TTL_SECONDS) * 1000,

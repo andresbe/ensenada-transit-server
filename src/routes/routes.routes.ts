@@ -1,4 +1,6 @@
-import { Request, Response, Router } from "express";
+import { updateRoute, deleteRoute } from "./manageRoute.service";
+import { json, Request, Response, Router } from "express";
+import { importRoute } from "./importRoute.service";
 import { authMiddleware, adminMiddleware } from "../auth/auth.middleware";
 import { asyncHandler } from "../middleware/errorHandler";
 import { apiRateLimiter } from "../middleware/rateLimiter";
@@ -13,6 +15,17 @@ import {
 } from "./routes.service";
 
 export const dbRoutesRouter = Router();
+
+dbRoutesRouter.post(
+  "/import",
+  apiRateLimiter,
+  authMiddleware,
+  adminMiddleware,
+  json({ limit: "10mb" }),
+  asyncHandler(async (req: Request, res: Response) => {
+    sendSuccess(res, { route: await importRoute(req.body) }, 201);
+  }),
+);
 
 // GET /routes
 dbRoutesRouter.get(
@@ -79,6 +92,7 @@ dbRoutesRouter.post(
 // POST /routes/:routeId/variants  (admin only)
 dbRoutesRouter.post(
   "/:routeId/variants",
+  json(),
   apiRateLimiter,
   authMiddleware,
   adminMiddleware,
@@ -112,3 +126,11 @@ dbRoutesRouter.post(
     sendSuccess(res, { variant }, 201);
   }),
 );
+
+dbRoutesRouter.put("/:routeId", apiRateLimiter, authMiddleware, adminMiddleware, json({ limit: "10mb" }), asyncHandler(async (req, res) => {
+  sendSuccess(res, { route: await updateRoute(req.params.routeId, req.body) });
+}));
+dbRoutesRouter.delete("/:routeId", apiRateLimiter, authMiddleware, adminMiddleware, asyncHandler(async (req, res) => {
+  await deleteRoute(req.params.routeId);
+  res.status(204).end();
+}));

@@ -3,7 +3,15 @@ import { AppError } from "../shared/errors";
 import { User, UserPreferences } from "../types";
 
 export const USER_COLUMNS =
-  "id, email, display_name, photo_url, auth_provider, role, status, created_at, updated_at";
+  "id, email, display_name, photo_url, auth_provider, role, status, is_tester, created_at, updated_at";
+
+export const getPreferences = async (userId: string): Promise<UserPreferences | null> => {
+  const result = await query<UserPreferences>(
+    "SELECT * FROM user_preferences WHERE user_id = $1",
+    [userId],
+  );
+  return result.rows[0] ?? null;
+};
 
 // ── Get user by id ────────────────────────────────────────────
 

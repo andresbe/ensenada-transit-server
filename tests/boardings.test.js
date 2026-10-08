@@ -1,0 +1,73 @@
+const {test}=require('node:test');
+const assert=require('node:assert/strict');
+const path=require('node:path');
+const {PGlite}=require('@electric-sql/pglite');
+const {pgcrypto}=require('@electric-sql/pglite/contrib/pgcrypto');
+process.env.JWT_SECRET='boarding-tests-only';
+const {validateBoardingEvidence}=require('../dist/boardings/policy');
+const now=Date.now();
+const sample={sourceType:'user',sourceId:'spoofable-client-id',busId:'BUS-1',routeId:'r',routeVariantId:'v',routeVariantDirection:'ida',latitude:31.8,longitude:-116.6,accuracy:10,timestamp:now};
+const driver={...sample,sourceType:'driver',sourceId:'driver@test.local',updatedAt:now};
+test('boarding rejects remote, stale, imprecise, passenger-sourced and wrong-route evidence',()=>{
+ assert.doesNotThrow(()=>validateBoardingEvidence(sample,driver,now));
+ for(const p of [{...sample,latitude:32},{...sample,accuracy:100},{...sample,accuracy:undefined},{...sample,timestamp:now-31000},{...sample,timestamp:now+6000}]) assert.throws(()=>validateBoardingEvidence(p,driver,now));
+ for(const bus of [null,{...driver,sourceType:'user'},{...driver,routeId:'other'},{...driver,routeVariantId:'other'},{...driver,timestamp:now-46000},{...driver,updatedAt:now-46000},{...driver,accuracy:100}]) assert.throws(()=>validateBoardingEvidence(sample,bus,now));
+});
+test('migration and boarding lifecycle enforce identity, replay protection, expiry, quotas and ownership',async t=>{
+ const pg=new PGlite({extensions:{pgcrypto}});t.after(()=>pg.close());
+ const execute=async(sql,params)=>params?pg.query(sql,params):((await pg.exec(sql)).at(-1)??{rows:[]});
+ const client={query:execute,release(){}};
+ await require('../scripts/migration-runner').migrate(client,path.join(__dirname,'../src/db/migrations'),()=>{});
+ const db=require('../dist/db');db.getClient=async()=>client;db.query=execute;
+ const redisModule=require.resolve('../dist/redis/client');
+ let live;
+ require.cache[redisModule]={id:redisModule,filename:redisModule,loaded:true,exports:{__esModule:true,default:{isReady:true,get:async()=>JSON.stringify(live)}}};
+ const {recordBoarding,endBoarding}=require('../dist/boardings/service');
+ const user=(await pg.query("INSERT INTO users(auth_provider) VALUES('guest') RETURNING id")).rows[0].id;
+ const other=(await pg.query("INSERT INTO users(auth_provider) VALUES('guest') RETURNING id")).rows[0].id;
+ const route=(await pg.query("INSERT INTO routes(name,short_name,color) VALUES('Test','T','#123456') RETURNING id")).rows[0].id;
+ const conductor=(await pg.query("INSERT INTO conductores(correo,password,nombre_usuario) VALUES('driver@test.local','test','Test') RETURNING id")).rows[0].id;
+ const vehicle=(await pg.query("INSERT INTO fleet_vehicles(tracking_id,economic_number,assigned_driver_id) VALUES('BUS-1','001',$1) RETURNING id",[conductor])).rows[0].id;
+ const session=(await pg.query("INSERT INTO driver_sessions(conductor_id,bus_id,vehicle_id,route_id,started_at) VALUES($1,'BUS-1',$2,$3,now()-interval '5 minutes') RETURNING id",[conductor,vehicle,route])).rows[0].id;
+ let p={...sample,routeId:route,timestamp:Date.now()};live={...driver,routeId:route,timestamp:p.timestamp,updatedAt:p.timestamp};
+ const first=await recordBoarding(user,p);assert.equal(first.status,'pending');
+ await assert.rejects(recordBoarding(user,p),{statusCode:409});
+ await assert.rejects(recordBoarding(other,p,first.id),{statusCode:409});
+ await endBoarding(other,first.id);
+ assert.equal((await pg.query('SELECT status FROM passenger_boardings WHERE id=$1',[first.id])).rows[0].status,'pending');
+ await pg.query("UPDATE passenger_boardings SET created_at=now()-interval '40 seconds',last_received_at=now()-interval '30 seconds',last_timestamp=$2 WHERE id=$1",[first.id,Date.now()-30000]);
+ p={...p,latitude:31.8005,timestamp:Date.now()};live={...live,latitude:p.latitude,timestamp:p.timestamp,updatedAt:p.timestamp};
+ const verified=await recordBoarding(user,p,first.id);assert.equal(verified.status,'verified');
+ await endBoarding(user,first.id);await endBoarding(user,first.id);
+ await assert.rejects(recordBoarding(user,{...p,timestamp:Date.now()},first.id),{statusCode:409});
+ const second=await recordBoarding(user,{...p,timestamp:Date.now()});assert.notEqual(second.id,first.id);
+ await pg.query("UPDATE passenger_boardings SET expires_at=now()-interval '1 second' WHERE id=$1",[second.id]);
+ await assert.rejects(recordBoarding(user,{...p,timestamp:Date.now()},second.id),{statusCode:409});
+ // New confirmations expire old sessions and never create two active records.
+ const third=await recordBoarding(user,{...p,timestamp:Date.now()});assert.notEqual(third.id,second.id);
+ assert.equal((await pg.query("SELECT count(*)::int AS n FROM passenger_boardings WHERE user_id=$1 AND status IN ('pending','verified')",[user])).rows[0].n,1);
+ await assert.rejects(recordBoarding(user,{...p,timestamp:Date.now()+1},third.id),{statusCode:429});
+ await endBoarding(user,third.id);
+ for(let i=0;i<3;i++) { const session=await recordBoarding(user,{...p,timestamp:Date.now()});await endBoarding(user,session.id); }
+ await assert.rejects(recordBoarding(user,{...p,timestamp:Date.now()}),{statusCode:429});
+ await pg.query("UPDATE driver_sessions SET status='ended',ended_at=now() WHERE id=$1",[session]);
+ await assert.rejects(recordBoarding(user,{...p,timestamp:Date.now()},third.id),{statusCode:409});
+ const {setTesterAccount}=require('../dist/admin/testerAccounts.service');
+ const admin=(await pg.query("INSERT INTO admins(email,password_hash,is_superadmin) VALUES('tester-admin@test.local','$2b$12$R9h/cIPz0gi.URNNX3kh2OPST9/PgBkqquzi.Ss7KIUgO2t0jWMUW',true) RETURNING id")).rows[0].id;
+ const ordinary=(await pg.query("INSERT INTO admins(email,password_hash) VALUES('ordinary@test.local','$2b$12$R9h/cIPz0gi.URNNX3kh2OPST9/PgBkqquzi.Ss7KIUgO2t0jWMUW') RETURNING id")).rows[0].id;
+ await assert.rejects(setTesterAccount(ordinary,user,true),{statusCode:403});
+ await assert.rejects(setTesterAccount(admin,user,'true'),{statusCode:400});
+ assert.equal((await pg.query('SELECT is_tester FROM users WHERE id=$1',[user])).rows[0].is_tester,false);
+ await setTesterAccount(admin,user,true);
+ require.cache[redisModule].exports.default.isReady=false;
+ const testInput={...p,busId:'TEST-any-bus',latitude:0,longitude:0,accuracy:undefined,timestamp:1};
+ const fake=await recordBoarding(user,testInput);assert.equal(fake.is_test,true);assert.equal(fake.status,'verified');
+ // Repeated timestamps and remote coordinates are allowed exclusively on test sessions.
+ assert.equal((await recordBoarding(user,testInput,fake.id)).id,fake.id);
+ assert.equal((await pg.query("SELECT count(*)::int AS n FROM passenger_boardings WHERE user_id=$1 AND status='verified' AND expires_at>now() AND NOT is_test",[user])).rows[0].n,0);
+ await setTesterAccount(admin,user,false);
+ assert.equal((await pg.query('SELECT status FROM passenger_boardings WHERE id=$1',[fake.id])).rows[0].status,'ended');
+ await assert.rejects(recordBoarding(user,testInput,fake.id),{statusCode:403});
+ assert.equal((await pg.query('SELECT count(*)::int AS n FROM tester_account_changes WHERE user_id=$1',[user])).rows[0].n,2);
+
+});

@@ -27,7 +27,7 @@ test("independent admin authentication and authorization over HTTP", async (t) =
   const admin = {
     id: "86d9624a-14ae-411e-8060-4a535b168fda", email: "admin@example.com",
     password_hash: await bcrypt.hash("admin-password", 12), display_name: "Admin",
-    status: "active", token_version: 1, created_at: new Date(), updated_at: new Date(),
+    is_superadmin: true, status: "active", token_version: 1, created_at: new Date(), updated_at: new Date(),
   };
   const queries = [];
   db.query = async (sql, params) => {
@@ -37,6 +37,7 @@ test("independent admin authentication and authorization over HTTP", async (t) =
         : params[0] === admin.id && params[1] === admin.token_version;
       return { rows: matches && admin.status === "active" ? [admin] : [], rowCount: matches && admin.status === "active" ? 1 : 0 };
     }
+    if (sql.includes("FROM fleet_vehicles") || sql.includes("FROM routes") || sql.includes("FROM route_legacy_aliases")) return {rows:[],rowCount:0};
     // Generic login must never authenticate an independent admin.
     if (sql.includes("FROM users")) return { rows: [], rowCount: 0 };
     throw new Error("Unexpected query");

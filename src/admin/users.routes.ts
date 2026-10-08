@@ -9,6 +9,8 @@ import { AppError } from "../shared/errors";
 import { sendSuccess } from "../shared/response";
 import { User, UserRole, UserStatus } from "../types";
 import { USER_COLUMNS } from "../users/users.service";
+import { getActiveAdmin } from "../auth/admin.service";
+import { setTesterAccount } from "./testerAccounts.service";
 
 const SALT_ROUNDS = 12;
 const roles = new Set<UserRole>(["user", "driver", "admin"]);
@@ -17,6 +19,12 @@ const statuses = new Set<UserStatus>(["active", "suspended", "deleted"]);
 export const adminUsersRouter = Router();
 
 adminUsersRouter.use(authMiddleware, adminMiddleware);
+
+adminUsersRouter.patch("/:userId/tester", apiRateLimiter, asyncHandler(async (req: Request, res: Response) => {
+  const admin = await getActiveAdmin(req.user!);
+  const user = await setTesterAccount(admin.id, req.params.userId, req.body?.is_tester);
+  sendSuccess(res, { user });
+}));
 
 const optionalString = (value: unknown): string | null | undefined => {
   if (value === undefined) {

@@ -51,7 +51,9 @@ export const conductorLoginHandler = async (req: Request, res: Response): Promis
 };
 
 export const socialHandler = async (req: Request, res: Response): Promise<void> => {
+  res.setHeader("Cache-Control", "no-store");
   const body = req.body as {
+    password?: unknown;
     provider?: unknown;
     provider_token?: unknown;
     email?: unknown;
@@ -69,6 +71,7 @@ export const socialHandler = async (req: Request, res: Response): Promise<void> 
   }
 
   const result = await socialAuth({
+    password: typeof body.password === "string" ? body.password : undefined,
     provider: body.provider,
     provider_token: body.provider_token,
     email: typeof body.email === "string" ? body.email : undefined,

@@ -26,7 +26,7 @@ const locationsByBusId = new Map<string, LiveBusLocation>();
 const busLocationHistory = new Map<string, LiveBusLocation[]>();
 
 const isLocationStale = (location: LiveBusLocation, now = Date.now()): boolean => {
-  return now - location.updatedAt > env.locationTtlMs;
+  return now - location.updatedAt > env.locationTtlMs || now - location.timestamp > env.locationTtlMs;
 };
 
 const isValidGpsSpeed = (speed: number | undefined): speed is number => {
@@ -272,6 +272,8 @@ const putLocationsInMemory = (locations: LiveBusLocation[]) => {
 export const locationsService = {
   updateLocation(payload: LocationUpdateRequest): LiveBusLocation {
     const updatedAt = Date.now();
+    const previous = locationsByBusId.get(payload.busId);
+    if (previous && previous.timestamp > payload.timestamp) return previous;
     const history = pruneHistory(busLocationHistory.get(payload.busId) ?? [], updatedAt);
     const routeGeometry = routeGeometryService.getRouteGeometry(payload.routeVariantId);
     const routeSnap = routeGeometryService.snapPointToRoute(payload.routeVariantId, {

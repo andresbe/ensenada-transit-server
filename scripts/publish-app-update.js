@@ -1,3 +1,4 @@
+const { databaseOptions } = require("./database-options");
 require("dotenv").config();
 const fs = require("node:fs/promises");
 const { createHash } = require("node:crypto");
@@ -73,8 +74,7 @@ async function main() {
   console.log("[updates] Verifying public APK download, size and SHA-256...");
   await verifyDownload(manifest);
   const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
-    ssl: process.env.NODE_ENV === "production" ? { rejectUnauthorized: false } : false,
+    ...databaseOptions(),
     connectionTimeoutMillis: 5000,
   });
   try {

@@ -1,3 +1,11 @@
+import { lineManagementRouter } from "./tenancy/management.routes";
+import { scopedLineRouter } from "./tenancy/scoped.routes";
+import { platformRouter } from "./tenancy/platform.routes";
+import { notificationsRouter } from "./passengers/notifications.routes";
+import { fleetRouter } from "./fleet/fleet.routes";
+import { catalogRouter } from "./passengers/catalog.routes";
+import { journeyPlannerRouter } from "./passengers/journeyPlanner.routes";
+import { passengerRouter } from "./passengers/passengers.routes";
 import cors from "cors";
 import express from "express";
 import { env } from "./config/env";
@@ -20,7 +28,14 @@ import { appUpdatesRouter } from "./app-updates/appUpdates.routes";
 export const app = express();
 
 app.use(cors({ origin: env.corsOrigin }));
-app.use(express.json());
+const defaultJsonParser = express.json();
+app.use((req, res, next) => {
+  if (/^\/admin\/lines\/[^/]+\/db-routes(?:\/|$)/i.test(req.path) && ["POST","PUT"].includes(req.method)) return next();
+  // The import router authenticates before parsing its larger GeoJSON payload.
+  if ((req.method === "POST" && /^\/db-routes\/import\/?$/i.test(req.path)) ||
+      (req.method === "PUT" && /^\/db-routes\/[^/]+\/?$/i.test(req.path))) return next();
+  return defaultJsonParser(req, res, next);
+});
 
 // ── Health check ──────────────────────────────────────────────
 app.get("/health", (_req, res) => {
@@ -38,9 +53,17 @@ connectRedis()
 
 // ── API routes ────────────────────────────────────────────────
 app.use("/auth", authRouter);
+app.use("/admin/platform",platformRouter);
+app.use("/admin/lines",lineManagementRouter);
+app.use("/admin/lines/:lineId",scopedLineRouter);
 app.use("/updates", appUpdatesRouter);
 app.use("/admin/users", adminUsersRouter);
+app.use("/admin/buses", fleetRouter);
 app.use("/users", usersRouter);
+app.use(catalogRouter);
+app.use(journeyPlannerRouter);
+app.use(passengerRouter);
+app.use(notificationsRouter);
 app.use("/db-routes", dbRoutesRouter);
 app.use("/favorites", favoritesRouter);
 app.use("/reports", reportsRouter);

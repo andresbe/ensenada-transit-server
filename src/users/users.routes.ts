@@ -4,9 +4,19 @@ import { asyncHandler } from "../middleware/errorHandler";
 import { apiRateLimiter } from "../middleware/rateLimiter";
 import { sendSuccess } from "../shared/response";
 import { AppError } from "../shared/errors";
-import { getUserById, updatePreferences, updateUser } from "./users.service";
+import { getPreferences, getUserById, updatePreferences, updateUser } from "./users.service";
+import { readAvatar, saveProfile } from "./profile.service";
 
 export const usersRouter = Router();
+
+usersRouter.patch("/me/profile", apiRateLimiter, authMiddleware, userAccountMiddleware, asyncHandler(async (req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  sendSuccess(res, { user: await saveProfile(req.user!.sub, req.body) });
+}));
+usersRouter.get("/me/avatar", apiRateLimiter, authMiddleware, userAccountMiddleware, asyncHandler(async (req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  sendSuccess(res, { avatar: await readAvatar(req.user!.sub) });
+}));
 
 // GET /users/me
 usersRouter.get(
@@ -17,7 +27,8 @@ usersRouter.get(
   asyncHandler(async (req: Request, res: Response) => {
     if (!req.user) throw new AppError("Unauthorized.", 401);
     const user = await getUserById(req.user.sub);
-    sendSuccess(res, { user });
+    const preferences = await getPreferences(req.user.sub);
+    sendSuccess(res, { user, preferences });
   }),
 );
 

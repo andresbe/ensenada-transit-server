@@ -1,0 +1,76 @@
+const { test } = require("node:test");
+const assert = require("node:assert/strict");
+const path = require("node:path");
+const { PGlite } = require("@electric-sql/pglite");
+const { pgcrypto } = require("@electric-sql/pglite/contrib/pgcrypto");
+process.env.JWT_SECRET = "route-crud-test-only";
+test("route CRUD preserves identities and relations, validates ownership, rolls back, and soft deletes", async t => {
+  const pg = new PGlite({ extensions: { pgcrypto } });
+  t.after(() => pg.close());
+  const execute = async (sql, params) => params ? pg.query(sql, params) : ((await pg.exec(sql)).at(-1) ?? { rows: [] });
+  const client = { query: execute, release() {} };
+  await require("../scripts/migration-runner").migrate(client, path.join(__dirname,"../src/db/migrations"), () => {});
+  const db = require("../dist/db"), cache = require("../dist/redis/cache");
+  db.getClient = async () => client; db.query = async (...args) => { const result=await execute(...args); return {...result,rowCount:result.rows.length}; };
+  cache.invalidateRoutesCache = cache.invalidateRouteCache = cache.invalidateVariantCache = async () => {};
+  const { updateRoute, deleteRoute } = require("../dist/routes/manageRoute.service");
+  const { importRoute } = require("../dist/routes/importRoute.service");
+  const payload = { name: "Ruta original", short_name: "R", color: "#123456", visible_in_app: false, variants: [{name:"Ida", direction:"ida", geojson: { type:"LineString",coordinates:[[-116.6,31.8],[-116.5,31.9]] }, stops:[{name:"Centro",longitude:-116.6,latitude:31.8}]}] };
+  const route = await importRoute(payload);
+  const variant = route.variants[0];
+  const stop = (await pg.query("SELECT * FROM stops WHERE variant_id=$1",[variant.id])).rows[0];
+  const user = (await pg.query("INSERT INTO users(auth_provider) VALUES('guest') RETURNING id")).rows[0];
+  await pg.query("INSERT INTO favorite_routes(user_id,route_id) VALUES($1,$2)",[user.id,route.id]);
+  await pg.query("INSERT INTO favorite_stops(user_id,stop_id) VALUES($1,$2)",[user.id,stop.id]);
+  const revision = (await pg.query("SELECT updated_at::text AS version FROM routes WHERE id=$1",[route.id])).rows[0].version;
+  const edit = { ...payload, name:"Ruta editada", visible_in_app:true, version:revision, variants:[{...payload.variants[0],id:variant.id,stops:[{...payload.variants[0].stops[0],id:stop.id,name:"Centro actualizado"}]}] };
+  edit.variants[0].geojson.coordinates = [[-116.6,31.8],[-116.55,31.82],[-116.5,31.9]];
+  edit.variants[0].stops[0].longitude = -116.55;
+  edit.variants[0].stops[0].latitude = 31.82;
+  await updateRoute(route.id, edit);
+  const editedVariant = (await pg.query("SELECT coordinates, total_distance_meters FROM route_variants WHERE id=$1", [variant.id])).rows[0];
+  assert.deepEqual(editedVariant.coordinates, edit.variants[0].geojson.coordinates);
+  assert.ok(Number(editedVariant.total_distance_meters) > 0);
+  const movedStop = (await pg.query("SELECT longitude, latitude, variant_id FROM stops WHERE id=$1", [stop.id])).rows[0];
+  assert.equal(Number(movedStop.longitude), -116.55);
+  assert.equal(Number(movedStop.latitude), 31.82);
+  assert.equal(movedStop.variant_id, variant.id);
+  assert.equal((await pg.query("SELECT name FROM stops WHERE id=$1",[stop.id])).rows[0].name,"Centro actualizado");
+  assert.equal((await pg.query("SELECT count(*)::int n FROM favorite_stops")).rows[0].n,1);
+  await assert.rejects(updateRoute(route.id, edit), {statusCode:409});
+  const { getRouteById } = require('../dist/routes/routes.service');
+  const detail=await getRouteById(route.id);
+  assert.equal(detail.visible_in_app,true,'editor must receive the saved publication state');
+  assert.equal(typeof detail.version,'string');
+  await updateRoute(route.id,{...edit,version:detail.version,visible_in_app:detail.visible_in_app,variants:[{...edit.variants[0],stops:[{...edit.variants[0].stops[0],name:'Solo renombrada'}]}]});
+  assert.equal((await getRouteById(route.id)).visible_in_app,true,'renaming a stop keeps the route published');
+  delete edit.version;
+  const foreign = structuredClone(edit); foreign.variants[0].stops[0].id = user.id;
+  await assert.rejects(updateRoute(route.id, foreign), {statusCode:400});
+  const removed = structuredClone(edit); removed.variants[0].stops=[];
+  await assert.rejects(updateRoute(route.id, removed), {statusCode:409});
+  assert.equal((await pg.query("SELECT count(*)::int n FROM stops")).rows[0].n,1);
+  await assert.rejects(updateRoute(route.id,{...edit,variants:[]}),{statusCode:400});
+  const wrongVariant=structuredClone(edit); wrongVariant.variants[0].id=user.id;
+  await assert.rejects(updateRoute(route.id,wrongVariant),{statusCode:409});
+  // Real HTTP authorization boundary: passengers cannot mutate routes.
+  cache.incrementRateLimit = async () => 1;
+  const express = require("express"), jwt = require("jsonwebtoken");
+  const app = express(); app.use(express.json()); app.use("/db-routes", require("../dist/routes/routes.routes").dbRoutesRouter); app.use(require("../dist/shared/errors").errorHandler);
+  const server = app.listen(0,"127.0.0.1");
+  await new Promise(resolve => server.once("listening",resolve));
+  try {
+    for (const method of ["PUT","DELETE"]) {
+      const url = "http://127.0.0.1:" + server.address().port + "/db-routes/" + route.id;
+      assert.equal((await fetch(url,{method})).status,401);
+      const token = jwt.sign({sub:user.id,role:"user"},process.env.JWT_SECRET);
+      assert.equal((await fetch(url,{method,headers:{authorization:"Bearer " + token}})).status,403);
+    }
+  } finally { await new Promise(resolve => server.close(resolve)); }
+  await deleteRoute(route.id);
+  const deleted = (await pg.query("SELECT active,visible_in_app FROM routes WHERE id=$1",[route.id])).rows[0];
+  assert.equal(deleted.active,false); assert.equal(deleted.visible_in_app,false);
+  assert.equal((await pg.query("SELECT count(*)::int n FROM favorite_routes")).rows[0].n,1);
+  assert.equal((await pg.query("SELECT count(*)::int n FROM route_variants")).rows[0].n,1);
+  await assert.rejects(updateRoute(route.id,edit),{statusCode:404});
+});

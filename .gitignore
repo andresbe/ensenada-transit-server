@@ -3,3 +3,11 @@ dist/
 .env
 npm-debug.log*
 .DS_Store
+
+.local/
+.env.*
+!.env.example
+*.log
+*.jks
+*.p12
+*service-account*.json

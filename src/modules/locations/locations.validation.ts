@@ -102,7 +102,7 @@ export const validateLocationUpdate = (body: unknown): LocationUpdateRequest => 
     throw new AppError("heading must be between 0 and 360.", 400);
   }
 
-  if (timestamp <= 0) {
+  if (timestamp <= 0 || timestamp > Date.now() + 30000) {
     throw new AppError("timestamp must be a positive Unix timestamp in milliseconds.", 400);
   }
 

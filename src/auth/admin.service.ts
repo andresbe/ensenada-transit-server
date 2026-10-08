@@ -1,3 +1,4 @@
+import { jwtSecret } from "./tokenConfig";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import { query } from "../db";
@@ -5,6 +6,7 @@ import { AppError } from "../shared/errors";
 import { JWTPayload, User } from "../types";
 
 interface AdminRow {
+  is_superadmin: boolean;
   id: string;
   email: string;
   display_name: string | null;
@@ -14,13 +16,13 @@ interface AdminRow {
   updated_at: Date;
 }
 
-const ADMIN_COLUMNS = "id, email, display_name, status, token_version, created_at, updated_at";
+const ADMIN_COLUMNS = "id, email, display_name, status, token_version, created_at, updated_at, is_superadmin";
 // Compare a real bcrypt hash even for an unknown account to avoid a fast failure path.
 const DUMMY_HASH = "$2b$12$R9h/cIPz0gi.URNNX3kh2OPST9/PgBkqquzi.Ss7KIUgO2t0jWMUW";
 
 export function publicAdmin(admin: AdminRow): User {
   return {
-    id: admin.id, email: admin.email, display_name: admin.display_name,
+    is_superadmin: admin.is_superadmin, id: admin.id, email: admin.email, display_name: admin.display_name,
     role: "admin", status: admin.status, auth_provider: "email", photo_url: null,
     created_at: admin.created_at, updated_at: admin.updated_at,
   };
@@ -31,7 +33,7 @@ export function adminSession(admin: AdminRow): { user: User; token: string } {
     sub: admin.id, email: admin.email, role: "admin",
     identityType: "admin", tokenVersion: admin.token_version,
   };
-  const token = jwt.sign(payload, process.env.JWT_SECRET ?? "change_me_in_production", {
+  const token = jwt.sign(payload, jwtSecret(), {
     algorithm: "HS256",
     expiresIn: process.env.JWT_EXPIRES_IN ?? "7d",
   } as jwt.SignOptions);

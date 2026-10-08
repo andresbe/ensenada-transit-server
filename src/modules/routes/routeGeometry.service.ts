@@ -1,3 +1,5 @@
+import { query } from "../../db";
+import { parseRouteGeoJson } from "../../routes/geojson";
 import fs from "fs";
 import path from "path";
 import {
@@ -114,6 +116,27 @@ const loadAllRouteGeometries = () => {
 loadAllRouteGeometries();
 
 export const routeGeometryService = {
+  async ensureRouteGeometry(routeVariantId: string): Promise<void> {
+    // Legacy names retain their file-based geometries. UUID variants are read
+    // from PostgreSQL on demand, including after restarts and on other replicas.
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(routeVariantId)) return;
+    const result = await query<{ coordinates: unknown }>(
+      "SELECT coordinates FROM route_variants WHERE id = $1", [routeVariantId],
+    );
+    const coordinates = result.rows[0]?.coordinates;
+    if (!Array.isArray(coordinates) || coordinates.length === 0) {
+      routeGeometries.delete(routeVariantId);
+      return;
+    }
+    const parsed = parseRouteGeoJson({ type: "LineString", coordinates });
+    const points = parsed.coordinates.map(toPoint);
+    routeGeometries.set(routeVariantId, {
+      routeVariantId, segments: [points], segmentStartProgressMeters: [0],
+      totalDistanceMeters: calculatePolylineDistanceMeters(points),
+    });
+  },
+
+
   getRouteGeometry(routeVariantId: string): RouteGeometry | undefined {
     return routeGeometries.get(routeVariantId);
   },

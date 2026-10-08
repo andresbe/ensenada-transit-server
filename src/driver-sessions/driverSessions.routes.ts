@@ -38,10 +38,10 @@ driverSessionsRouter.get("/catalog",asyncHandler(async(req,res)=>{
     FROM fleet_vehicles v JOIN transport_lines l ON l.id=v.transport_line_id
     JOIN driver_line_memberships m ON m.line_id=l.id AND m.conductor_id=v.assigned_driver_id
     WHERE v.assigned_driver_id=$1 AND v.archived_at IS NULL AND v.operational_status='available' AND l.active AND m.active`,[identity.conductorId]);
-  const routes=await query(`SELECT r.id,r.name,r.transport_line_id,
+  const routes=await query(`SELECT r.id,r.name,r.transport_line_id,l.color AS line_color,
     (SELECT jsonb_agg(jsonb_build_object('id',rv.id,'name',rv.name,'direction',rv.direction,'coordinates',rv.coordinates))
       FROM route_variants rv WHERE rv.route_id=r.id AND jsonb_typeof(rv.coordinates)='array' AND jsonb_array_length(rv.coordinates)>=2) AS variants
-    FROM routes r WHERE r.active AND EXISTS(SELECT 1 FROM fleet_vehicles v
+    FROM routes r JOIN transport_lines l ON l.id=r.transport_line_id WHERE r.active AND EXISTS(SELECT 1 FROM fleet_vehicles v
       JOIN transport_lines l ON l.id=v.transport_line_id JOIN driver_line_memberships m ON m.line_id=l.id AND m.conductor_id=v.assigned_driver_id
       WHERE v.assigned_driver_id=$1 AND v.archived_at IS NULL AND v.operational_status='available' AND l.active AND m.active
       AND v.transport_line_id=r.transport_line_id AND (v.assigned_route_id IS NULL OR v.assigned_route_id=r.id)) ORDER BY r.name`,[identity.conductorId]);

@@ -1,6 +1,7 @@
 import bcrypt from "bcrypt";
+import { requireSuperadmin } from "../tenancy/access";
 import { Request, Response, Router } from "express";
-import { authMiddleware, adminMiddleware } from "../auth/auth.middleware";
+import { authMiddleware } from "../auth/auth.middleware";
 import { validateEmail, validatePassword } from "../auth/validators";
 import { query } from "../db";
 import { asyncHandler } from "../middleware/errorHandler";
@@ -18,7 +19,7 @@ const statuses = new Set<UserStatus>(["active", "suspended", "deleted"]);
 
 export const adminUsersRouter = Router();
 
-adminUsersRouter.use(authMiddleware, adminMiddleware);
+adminUsersRouter.use(authMiddleware, requireSuperadmin);
 
 adminUsersRouter.patch("/:userId/tester", apiRateLimiter, asyncHandler(async (req: Request, res: Response) => {
   const admin = await getActiveAdmin(req.user!);

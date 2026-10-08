@@ -11,6 +11,12 @@ import { AppError } from "../shared/errors";
 import { validateEmail,validatePassword } from "../auth/validators";
 export const platformRouter=Router();
 platformRouter.use(authMiddleware,requireSuperadmin,apiRateLimiter);
+platformRouter.get("/admins",asyncHandler(async(_req,res)=>{
+  const result = await query(
+    "SELECT id,email,display_name,status,is_superadmin,created_at FROM admins ORDER BY created_at DESC,id DESC LIMIT 200"
+  );
+  res.json({admins:result.rows});
+}));
 platformRouter.post("/admins",asyncHandler(async(req,res)=>{
   const b=record(req.body),email=validateEmail(b.email),password=validatePassword(b.password);
   if (Buffer.byteLength(password,"utf8")>72) throw new AppError("La contraseña excede 72 bytes.",400);

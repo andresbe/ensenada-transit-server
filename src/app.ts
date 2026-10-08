@@ -31,6 +31,7 @@ app.use(cors({ origin: env.corsOrigin }));
 const defaultJsonParser = express.json();
 app.use((req, res, next) => {
   if (/^\/admin\/lines\/[^/]+\/db-routes(?:\/|$)/i.test(req.path) && ["POST","PUT"].includes(req.method)) return next();
+  if (/^\/admin\/platform\/db-routes(?:\/|$)/i.test(req.path) && ["POST","PUT"].includes(req.method)) return next();
   // The import router authenticates before parsing its larger GeoJSON payload.
   if ((req.method === "POST" && /^\/db-routes\/import\/?$/i.test(req.path)) ||
       (req.method === "PUT" && /^\/db-routes\/[^/]+\/?$/i.test(req.path))) return next();

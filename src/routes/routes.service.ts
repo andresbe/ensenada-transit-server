@@ -7,11 +7,11 @@ import { Route, RouteVariant, Stop } from "../types";
 
 // ── Get all routes ────────────────────────────────────────────
 
-export const getAllRoutes = async (): Promise<Route[]> => {
+export const getAllRoutes = async (administrative = false): Promise<Route[]> => {
 
   const result = await query<Route>(
-    `SELECT id, name, short_name, color, text_color, active, visible_in_app, created_at, updated_at
-     FROM routes WHERE active = TRUE ${currentLine() ? "" : "AND visible_in_app AND (transport_line_id IS NULL OR EXISTS(SELECT 1 FROM transport_lines l WHERE l.id=transport_line_id AND l.active))"} ORDER BY name`,
+    `SELECT id, transport_line_id, name, short_name, color, text_color, active, visible_in_app, created_at, updated_at
+     FROM routes WHERE active = TRUE ${currentLine() || administrative ? "" : "AND visible_in_app AND (transport_line_id IS NULL OR EXISTS(SELECT 1 FROM transport_lines l WHERE l.id=transport_line_id AND l.active))"} ORDER BY name`,
   );
 
   return result.rows;
@@ -23,15 +23,15 @@ export interface RouteWithVariants extends Route {
   variants: RouteVariant[];
 }
 
-export const getRouteById = async (routeId: string): Promise<RouteWithVariants> => {
+export const getRouteById = async (routeId: string, administrative = false): Promise<RouteWithVariants> => {
 
   const routeResult = await query<Route>(
-    `SELECT id, name, short_name, color, text_color, active, visible_in_app, created_at, updated_at, updated_at::text AS version
-     FROM routes WHERE id = $1 ${currentLine() ? "" : "AND active AND visible_in_app AND (transport_line_id IS NULL OR EXISTS(SELECT 1 FROM transport_lines l WHERE l.id=transport_line_id AND l.active))"}`,
+    `SELECT id, transport_line_id, name, short_name, color, text_color, active, visible_in_app, created_at, updated_at, updated_at::text AS version
+     FROM routes WHERE id = $1 ${currentLine() || administrative ? "" : "AND active AND visible_in_app AND (transport_line_id IS NULL OR EXISTS(SELECT 1 FROM transport_lines l WHERE l.id=transport_line_id AND l.active))"}`,
     [routeId],
   );
 
-  if (!routeResult.rowCount || routeResult.rowCount === 0) {
+  if (!routeResult.rows.length) {
     throw new AppError("Route not found.", 404);
   }
 
@@ -58,8 +58,9 @@ export interface VariantWithStops extends RouteVariant {
 export const getVariant = async (
   routeId: string,
   variantId: string,
+  administrative = false,
 ): Promise<VariantWithStops> => {
-  await getRouteById(routeId);
+  await getRouteById(routeId, administrative);
 
   const variantResult = await query<RouteVariant>(
     `SELECT id, route_id, name, direction, coordinates, total_distance_meters, created_at, updated_at
@@ -67,7 +68,7 @@ export const getVariant = async (
     [variantId, routeId],
   );
 
-  if (!variantResult.rowCount || variantResult.rowCount === 0) {
+  if (!variantResult.rows.length) {
     throw new AppError("Route variant not found.", 404);
   }
 

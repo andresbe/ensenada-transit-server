@@ -1,3 +1,4 @@
+import { platformOperationsRouter } from "./platformOperations.routes";
 import { apiRateLimiter } from "../middleware/rateLimiter";
 import { Router } from "express";
 import bcrypt from "bcrypt";
@@ -53,3 +54,5 @@ platformRouter.post("/assign",asyncHandler(async(req,res)=>{
     await client.query("COMMIT");res.json({assigned:true});
   } catch(e) {await client.query("ROLLBACK");throw e;} finally {client.release();}
 }));
+
+platformRouter.use(platformOperationsRouter);

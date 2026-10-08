@@ -1,3 +1,4 @@
+import { adminReadRouter } from "./adminRead.routes";
 import { checkpointsRouter } from "./checkpoints.routes";
 import { apiRateLimiter } from "../middleware/rateLimiter";
 import { driverManagementRouter } from "./drivers.routes";
@@ -41,28 +42,7 @@ scopedLineRouter.use(driverManagementRouter);
 scopedLineRouter.use(requireLine);
 scopedLineRouter.use(checkpointsRouter);
 scopedLineRouter.use(operationsRouter);
-scopedLineRouter.get("/buses/live",asyncHandler(async(req,res)=>{
-  const vehicles=(await query("SELECT tracking_id FROM fleet_vehicles WHERE archived_at IS NULL")).rows;
-  const ids=new Set(vehicles.map(v=>v.tracking_id));
-  const buses=await locationsService.getLiveBuses(req.query.includeStale==='true');
-  res.json({buses:buses.filter(b=>ids.has(b.busId)).map(b=>b.sourceType === "user" ? {...b,sourceId:undefined} : b)});
-}));
-scopedLineRouter.get("/alerts",asyncHandler(async(_req,res)=>{
-  res.json({alerts:(await query("SELECT a.id,a.route_id,r.name AS route_name,a.title_es AS title,a.description_es AS description,a.category,a.severity,a.published,a.created_at,a.expires_at FROM alerts a LEFT JOIN routes r ON r.id=a.route_id ORDER BY a.created_at DESC,a.id LIMIT 100")).rows});
-}));
-scopedLineRouter.get("/summary",asyncHandler(async(_req,res)=>{
-  const [vehicles,routes,drivers]=await Promise.all([
-    query("SELECT count(*)::int AS total,count(*) FILTER(WHERE operational_status='available')::int AS available FROM fleet_vehicles WHERE archived_at IS NULL"),
-    query("SELECT count(*)::int AS total,count(*) FILTER(WHERE visible_in_app)::int AS published FROM routes WHERE active"),
-    query("SELECT count(c.id)::int AS total FROM conductores c JOIN driver_line_memberships m ON m.conductor_id=c.id WHERE m.line_id=$1 AND m.active",[_req.params.lineId]),
-  ]);res.json({vehicles:vehicles.rows[0],routes:routes.rows[0],drivers:drivers.rows[0]});
-}));
-scopedLineRouter.get("/reports",asyncHandler(async(_req,res)=>{
-  res.json({records:(await query("SELECT ur.id,ur.type,ur.route_id,r.name AS route_name,ur.bus_id,ur.message,ur.severity,ur.status,ur.created_at,s.name AS stop_name FROM user_reports ur LEFT JOIN routes r ON r.id=ur.route_id LEFT JOIN stops s ON s.id=ur.stop_id ORDER BY ur.created_at DESC LIMIT 100")).rows});
-}));
-scopedLineRouter.get("/audit",asyncHandler(async(_req,res)=>{
-  res.json({records:(await query("SELECT action,entity_type,entity_id,created_at FROM line_audit_log ORDER BY created_at DESC LIMIT 100")).rows});
-}));
+scopedLineRouter.use(adminReadRouter);
 scopedLineRouter.use("/vehicles",fleetRouter);
 scopedLineRouter.use("/db-routes",dbRoutesRouter);
 scopedLineRouter.use(json());

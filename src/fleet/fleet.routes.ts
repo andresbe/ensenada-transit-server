@@ -13,8 +13,8 @@ fleetRouter.use(authMiddleware, adminMiddleware, apiRateLimiter);
 fleetRouter.get("/options", asyncHandler(async (_req,res) => {
   const [lines,drivers,routes] = await Promise.all([
     query("SELECT id,name FROM transport_lines WHERE active=true ORDER BY display_order,name"),
-    query("SELECT c.id,c.nombre_usuario AS name FROM conductores c WHERE ($1::uuid IS NULL OR EXISTS(SELECT 1 FROM driver_line_memberships m WHERE m.conductor_id=c.id AND m.line_id=$1 AND m.active)) ORDER BY c.nombre_usuario", [currentLine()?.lineId ?? null]),
-    query("SELECT id,name FROM routes WHERE active=true ORDER BY name"),
+    query("SELECT c.id,c.nombre_usuario AS name,ARRAY(SELECT m.line_id FROM driver_line_memberships m WHERE m.conductor_id=c.id AND m.active) AS line_ids FROM conductores c WHERE ($1::uuid IS NULL OR EXISTS(SELECT 1 FROM driver_line_memberships m WHERE m.conductor_id=c.id AND m.line_id=$1 AND m.active)) ORDER BY c.nombre_usuario", [currentLine()?.lineId ?? null]),
+    query("SELECT id,name,transport_line_id FROM routes WHERE active=true ORDER BY name"),
   ]);
   sendSuccess(res, {lines:lines.rows, drivers:drivers.rows, routes:routes.rows});
 }));

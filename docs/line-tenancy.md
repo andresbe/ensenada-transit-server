@@ -85,7 +85,20 @@ automáticamente. No se ejecutó contra producción durante esta implementación
 
 ## Dashboard y compatibilidad móvil
 
-Una sola línea se selecciona automáticamente; varias se eligen en el encabezado.
+El superadministrador puede operar todas las secciones sin membresía ni línea
+seleccionada. **Todas las líneas** usa `/admin/platform` con validación de
+superadministrador vigente en cada solicitud; incluye conductores sin asignar y
+rutas en borrador. Elegir una línea en el menú lateral filtra su operación mediante
+los endpoints aislados habituales. Las cuentas de línea conservan su alcance y RLS.
+
+Las altas de rutas y camiones incluyen la línea propietaria en el formulario global;
+no se exige asignar esa línea a la cuenta del superadministrador. Los conductores
+pueden crearse sin línea y asignarse después. Su nombre y contraseña se administran
+globalmente; la suspensión de acceso sigue siendo por línea. Las escrituras de
+rutas, camiones, alertas y check-ins con propietario reutilizan su contexto de línea
+y auditoría. Los viajes activos y las revisiones siguen protegiendo la integridad.
+
+Para cuentas de línea, una línea activa se selecciona automáticamente.
 Cambiar de espacio desmonta formularios/listados/mapas y cancela sus lecturas cuando
 corresponde. Permisos se refrescan periódicamente y siempre se verifican en servidor.
 Crear un camión ya no pregunta por línea: permite elegir una ruta del espacio activo.

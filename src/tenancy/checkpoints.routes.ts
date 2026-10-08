@@ -20,10 +20,10 @@ checkpointsRouter.get("/routes/:routeId/checkpoints",asyncHandler(async(req,res)
   res.json({route,variants,stops,checkpoints,revision:route.checkpoint_revision});
 }));
 checkpointsRouter.put("/routes/:routeId/checkpoints",asyncHandler(async(req,res)=>{
-  const routeId=uuid(req.params.routeId),plan=checkpointPlan(req.body),line=currentLine()!,db=await getClient();
+  const routeId=uuid(req.params.routeId),plan=checkpointPlan(req.body),line=currentLine(),db=await getClient();
   try {
     await db.query("BEGIN");
-    const route=(await db.query("SELECT checkpoint_revision FROM routes WHERE id=$1 AND active FOR UPDATE",[routeId])).rows[0];
+    const route=(await db.query("SELECT checkpoint_revision,transport_line_id FROM routes WHERE id=$1 AND active FOR UPDATE",[routeId])).rows[0];
     if(!route)throw new AppError("Ruta no encontrada.",404);
     if(route.checkpoint_revision!==plan.revision)throw new AppError("Los check-ins cambiaron. Cierra y vuelve a abrir para actualizarlos.",409);
     const stops=(await db.query("SELECT id,variant_id,sequence FROM stops WHERE route_id=$1 ORDER BY variant_id,sequence,id",[routeId])).rows;
@@ -42,7 +42,7 @@ checkpointsRouter.put("/routes/:routeId/checkpoints",asyncHandler(async(req,res)
         ON CONFLICT (variant_id,stop_id) DO UPDATE SET
           target_minutes=EXCLUDED.target_minutes,tolerance_minutes=EXCLUDED.tolerance_minutes,radius_meters=EXCLUDED.radius_meters,
           name=CASE WHEN $9::boolean THEN EXCLUDED.name ELSE route_checkpoints.name END`,
-        [routeId,stop.variant_id,line.lineId,p.stop_id,p.target_minutes,p.tolerance_minutes,p.radius_meters,p.name??null,p.name!==undefined]);
+        [routeId,stop.variant_id,line?.lineId ?? route.transport_line_id,p.stop_id,p.target_minutes,p.tolerance_minutes,p.radius_meters,p.name??null,p.name!==undefined]);
     }
     await db.query("UPDATE routes SET checkpoint_revision=checkpoint_revision+1 WHERE id=$1",[routeId]);
     await db.query("COMMIT");res.json({revision:plan.revision+1});

@@ -21,9 +21,6 @@ test('line tenancy: real RLS, HTTP isolation, revocation, drafts, and compatible
   const hash='$2b$12$R9h/cIPz0gi.URNNX3kh2OPST9/PgBkqquzi.Ss7KIUgO2t0jWMUW';
   const admin=async(email,superadmin=false)=>(await execute('INSERT INTO admins(email,password_hash,is_superadmin) VALUES($1,$2,$3) RETURNING *',[email,hash,superadmin])).rows[0];
   const root=await admin('root@test.local',true),yellowAdmin=await admin('yellow@test.local'),redAdmin=await admin('red@test.local'),viewer=await admin('viewer@test.local');
-  const yellow=(await execute("INSERT INTO transport_lines(name,short_code) VALUES('Amarilla','AMA') RETURNING *")).rows[0];
-  const red=(await execute("INSERT INTO transport_lines(name,short_code) VALUES('Roja','ROJ') RETURNING *")).rows[0];
-  for(const [a,l,role] of [[yellowAdmin,yellow,'admin'],[redAdmin,red,'operator'],[viewer,yellow,'viewer']])await execute('INSERT INTO admin_line_memberships(admin_id,line_id,role) VALUES($1,$2,$3)',[a.id,l.id,role]);
   const express=require('express'),jwt=require('jsonwebtoken');
   const app=express();app.use(express.json({limit:'10mb'}));app.use('/admin/lines',require('../dist/tenancy/management.routes').lineManagementRouter);
   app.use('/admin/lines/:lineId',require('../dist/tenancy/scoped.routes').scopedLineRouter);
@@ -39,6 +36,17 @@ test('line tenancy: real RLS, HTTP isolation, revocation, drafts, and compatible
     const response=await fetch(base+url,{method,headers:{authorization:'Bearer '+token,'content-type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});
     return {status:response.status,body:await response.json().catch(()=>({}))};
   };
+  await t.test('superadmin can open every section before any line exists',async()=>{
+    for(const endpoint of ['/summary','/vehicles','/drivers','/db-routes','/catalog','/alerts','/trips','/reports','/audit','/buses/live']) {
+      const response=await call(root,'/admin/platform'+endpoint);
+      assert.equal(response.status,200,endpoint+JSON.stringify(response.body));
+    }
+    assert.deepEqual((await call(root,'/admin/lines')).body,{lines:[],is_superadmin:true});
+    assert.equal((await call(root,'/admin/platform/summary')).body.drivers.total,0);
+  });
+  const yellow=(await execute("INSERT INTO transport_lines(name,short_code) VALUES('Amarilla','AMA') RETURNING *")).rows[0];
+  const red=(await execute("INSERT INTO transport_lines(name,short_code) VALUES('Roja','ROJ') RETURNING *")).rows[0];
+  for(const [a,l,role] of [[yellowAdmin,yellow,'admin'],[redAdmin,red,'operator'],[viewer,yellow,'viewer']])await execute('INSERT INTO admin_line_memberships(admin_id,line_id,role) VALUES($1,$2,$3)',[a.id,l.id,role]);
   const prefix='/admin/lines/'+yellow.id;
   assert.equal((await call(yellowAdmin,'/admin/lines')).body.lines.length,1);
   assert.equal((await call(yellowAdmin,'/admin/lines/'+red.id+'/vehicles')).status,403);
@@ -235,6 +243,62 @@ test('line tenancy: real RLS, HTTP isolation, revocation, drafts, and compatible
     assert.equal((await call(root,prefix+'/drivers?q=Nombre%20actualizado')).body.drivers[0].nombre_usuario,'Nombre actualizado');
     await execute('UPDATE routes SET active=false WHERE id=$1',[routeId]);
     assert.ok((await call(root,prefix+'/trips/options')).body.routes.some(row=>row.id===routeId));
+  });
+
+  await t.test('superadmin operates every dashboard section without membership or selected line',async()=>{
+    const global='/admin/platform';
+    for(const endpoint of ['/summary','/buses/live','/vehicles','/vehicles/options','/drivers','/db-routes','/catalog','/alerts','/trips','/trips/options','/reports','/audit']) {
+      const response=await call(root,global+endpoint);
+      assert.equal(response.status,200,endpoint+JSON.stringify(response.body));
+      assert.equal((await call(yellowAdmin,global+endpoint)).status,403,endpoint);
+      assert.equal((await fetch(base+global+endpoint)).status,401,endpoint);
+    }
+    const globalVehicles=(await call(root,global+'/vehicles')).body.vehicles;
+    assert.ok(globalVehicles.some(v=>v.transport_line_id===yellow.id));
+    assert.ok(globalVehicles.some(v=>v.transport_line_id===red.id));
+    const created=await call(root,global+'/drivers','POST',{name:'Sin línea',email:'platform-driver@test.local',password:'driver-platform-password'});
+    assert.equal(created.status,201,JSON.stringify(created.body));
+    const list=await call(root,global+'/drivers?q=platform-driver');
+    const globalDriver=list.body.drivers[0];
+    assert.equal(globalDriver.unassigned,true);
+    assert.equal((await call(root,global+'/drivers/'+globalDriver.id,'PUT',{name:'Nombre editado',revision:globalDriver.revision})).status,200);
+    assert.equal((await call(root,global+'/drivers/'+globalDriver.id,'PUT',{name:'Obsoleto',revision:globalDriver.revision})).status,409);
+    assert.equal((await call(yellowAdmin,global+'/drivers','POST',{name:'Bad'})).status,403);
+    const payload={...routePayload,name:'Borrador global',transport_line_id:yellow.id};
+    const importedGlobal=await call(root,global+'/db-routes/import','POST',payload);
+    assert.equal(importedGlobal.status,201,JSON.stringify(importedGlobal.body));
+    const id=importedGlobal.body.route.id;
+    assert.equal(importedGlobal.body.route.transport_line_id,yellow.id);
+    assert.ok((await call(root,global+'/db-routes')).body.routes.some(r=>r.id===id));
+    const detail=await call(root,global+'/db-routes/'+id);
+    assert.equal(detail.status,200);
+    const variant=detail.body.route.variants[0];
+    assert.equal((await call(root,global+'/db-routes/'+id+'/variants/'+variant.id)).status,200);
+    assert.equal((await fetch(base+'/db-routes/'+id)).status,404,'draft remains private');
+    assert.equal((await call(root,global+'/db-routes/'+id,'PUT',{...payload,version:detail.body.route.version,name:'Editada global'})).status,200);
+    assert.equal((await call(root,global+'/routes/'+id+'/checkpoints')).status,200);
+    assert.equal((await call(root,global+'/routes/'+id+'/checkpoints','PUT',{revision:1,checkpoints:[]})).status,200);
+    const vehicle=await call(root,global+'/vehicles','POST',{economic_number:'GLOBAL-001',transport_line_id:yellow.id,operational_status:'available'});
+    assert.equal(vehicle.status,201,JSON.stringify(vehicle.body));
+    assert.equal((await call(root,global+'/vehicles/'+vehicle.body.vehicle.id,'PUT',{...vehicle.body.vehicle,economic_number:'GLOBAL-002'})).status,200);
+    assert.equal((await call(root,global+'/vehicles/'+vehicle.body.vehicle.id+'/history')).status,200);
+    assert.equal((await call(root,global+'/vehicles','POST',{economic_number:'Missing-line',operational_status:'available'})).status,400);
+    await execute('UPDATE routes SET visible_in_app=true WHERE id=$1',[id]);
+    const alert=await call(root,global+'/alerts','POST',{route_id:id,category:'routes',severity:'info',title_es:'Global',description_es:'Aviso global',published:false,expires_at:new Date(Date.now()+3600000).toISOString()});
+    assert.equal(alert.status,201,JSON.stringify(alert.body));
+    assert.equal(alert.body.alert.transport_line_id,yellow.id);
+    assert.equal((await call(root,global+'/alerts/'+alert.body.alert.id,'PATCH',{published:false})).status,200);
+    for(const [endpoint,method,body] of [
+      ['/vehicles/'+vehicle.body.vehicle.id,'PUT',vehicle.body.vehicle],
+      ['/db-routes/import','POST',payload],
+      ['/alerts','POST',{route_id:id}],
+      ['/drivers/'+globalDriver.id,'PUT',{name:'Intruso',revision:2}],
+    ]) assert.equal((await call(yellowAdmin,global+endpoint,method,body)).status,403,endpoint);
+    const lineList=await call(root,'/admin/lines');
+    assert.ok(lineList.body.lines.length>=2);
+    await execute('UPDATE admins SET is_superadmin=false WHERE id=$1',[root.id]);
+    assert.equal((await call(root,global+'/summary')).status,403,'revocation applies to existing token');
+    await execute('UPDATE admins SET is_superadmin=true WHERE id=$1',[root.id]);
   });
 
 });

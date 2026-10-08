@@ -23,7 +23,7 @@ lineManagementRouter.post("/",requireSuperadmin,asyncHandler(async(req,res)=>{
   const client=await getClient();
   try {
     await client.query("BEGIN");
-    const line=(await client.query("INSERT INTO transport_lines(name,short_code,color) VALUES($1,$2,$3) RETURNING *",[text(body.name,"Nombre",100),text(body.short_code,"Código",12).toUpperCase(),color])).rows[0];
+    const line=(await client.query("INSERT INTO transport_lines(name,short_code,color) VALUES($1,$2,$3) RETURNING *",[text(body.name,"Nombre",100),(body.short_code === undefined ? "" : text(body.short_code,"Código",12).toUpperCase()),color])).rows[0];
     await client.query("INSERT INTO line_audit_log(line_id,actor_id,action,entity_type,entity_id) VALUES($1::uuid,$2,'CREATE','line',($1::uuid)::text)",[line.id,req.user!.sub]);
     await client.query("COMMIT");res.status(201).json({line});
   } catch(e) {await client.query("ROLLBACK");throw e;} finally {client.release();}
@@ -31,10 +31,10 @@ lineManagementRouter.post("/",requireSuperadmin,asyncHandler(async(req,res)=>{
 lineManagementRouter.put("/:lineId",requireSuperadmin,asyncHandler(async(req,res)=>{
   const body=record(req.body),id=uuid(req.params.lineId),color=text(body.color,"color",7);
   if (!/^#[0-9a-f]{6}$/i.test(color)||typeof body.active!=="boolean"||!Number.isInteger(body.revision)) throw new AppError("Datos de línea inválidos.",400);
-  const result=await query(`WITH changed AS (UPDATE transport_lines SET name=$2,short_code=$3,color=$4,active=$5,revision=revision+1
+  const result=await query(`WITH changed AS (UPDATE transport_lines SET name=$2,short_code=COALESCE($3,short_code),color=$4,active=$5,revision=revision+1
     WHERE id=$1 AND revision=$6 RETURNING *), audit AS (
     INSERT INTO line_audit_log(line_id,actor_id,action,entity_type,entity_id) SELECT id,$7,'UPDATE','line',id::text FROM changed)
-    SELECT * FROM changed`,[id,text(body.name,"Nombre",100),text(body.short_code,"Código",12).toUpperCase(),color,body.active,body.revision,req.user!.sub]);
+    SELECT * FROM changed`,[id,text(body.name,"Nombre",100),(body.short_code === undefined ? null : text(body.short_code,"Código",12).toUpperCase()),color,body.active,body.revision,req.user!.sub]);
   if (!result.rows.length) throw new AppError("La línea cambió. Actualiza la lista.",409);
   res.json({line:result.rows[0]});
 }));

@@ -112,7 +112,7 @@ catalogRouter.post(
     if (!/^#[0-9a-f]{6}$/i.test(color)) throw new AppError("Invalid color.", 400);
     const result = await query(
       "INSERT INTO transport_lines(name,short_code,color) VALUES($1,$2,$3) RETURNING *",
-      [text(body.name, "name"), text(body.short_code, "short_code", 12), color],
+      [text(body.name, "name"), body.short_code === undefined ? "" : text(body.short_code, "short_code", 12), color],
     );
     res.status(201).json({ line: result.rows[0] });
   }),

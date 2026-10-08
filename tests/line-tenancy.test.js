@@ -165,6 +165,22 @@ test('line tenancy: real RLS, HTTP isolation, revocation, drafts, and compatible
   assert.equal((await call(yellowAdmin,prefix+'/vehicles')).status,403);
   await lineContext.run({lineId:yellow.id,adminId:yellowAdmin.id,role:'admin',tokenVersion:1},async()=>assert.equal((await db.query('SELECT * FROM fleet_vehicles')).rows.length,0));
   const newLine=await call(root,'/admin/lines','POST',{name:'Verde',short_code:'VER',color:'#00FF00'});assert.equal(newLine.status,201,JSON.stringify(newLine.body));
+  await t.test('lines only require name and color and preserve legacy codes on edit',async()=>{
+    const created=await call(root,'/admin/lines','POST',{name:'Morada',color:'#8833AA'});
+    assert.equal(created.status,201,JSON.stringify(created.body));
+    assert.equal(created.body.line.short_code,'');
+    for(const line of [created.body.line,newLine.body.line]) {
+      const body={name:line.name+' nueva',color:'#663399',active:true,revision:line.revision};
+      const updated=await call(root,'/admin/lines/'+line.id,'PUT',body);
+      assert.equal(updated.status,200,JSON.stringify(updated.body));
+      assert.equal(updated.body.line.id,line.id);
+      assert.equal(updated.body.line.name,body.name);
+      assert.equal(updated.body.line.color,body.color);
+      assert.equal(updated.body.line.short_code,line.short_code);
+      assert.equal((await call(root,'/admin/lines/'+line.id,'PUT',body)).status,409);
+    }
+    assert.equal((await call(redAdmin,'/admin/lines','POST',{name:'Otra',color:'#663399'})).status,403);
+  });
   const deniedMember=await call(redAdmin,'/admin/lines/'+red.id+'/members','PUT',{email:viewer.email,role:'admin',active:true});assert.equal(deniedMember.status,403);
   assert.ok((await execute('SELECT * FROM line_audit_log')).rows.length>0);
   await execute('UPDATE transport_lines SET active=false WHERE id=$1',[red.id]);

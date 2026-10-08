@@ -48,11 +48,16 @@ dinámicos de tablas y columnas provienen de listas internas. Esto debe preserva
 4. Revisar las cuentas legacy de `conductores`: si almacenan texto plano, requieren
    restablecimiento de contraseña o conversión mediante un procedimiento administrativo
    controlado a bcrypt antes del cambio. El nuevo login las rechazará.
-5. `DATABASE_SSL_MODE=verify-full` es el valor predeterminado en producción.
-   `DATABASE_SSL_CA` admite el certificado CA PEM cuando sea necesario. Eliminar
-   parámetros `ssl*` de `DATABASE_URL`. Si el servicio solo ofrece tráfico interno
-   sin TLS, `DATABASE_SSL_MODE=disable` es una decisión explícita limitada a esa red
-   privada; nunca usarla para conexiones públicas. No hay opción `no-verify`.
+5. Producción valida certificados por defecto en conexiones públicas (`verify-full`).
+   Para hosts `*.railway.internal` sin CA configurada usa `require`: mantiene TLS,
+   pero acepta el certificado autofirmado sin verificar su identidad, por compatibilidad
+   con PostgreSQL de Railway. Este modo se rechaza para hosts públicos.
+   `DATABASE_SSL_CA` admite una CA PEM y activa validación estricta por defecto;
+   también puede exigirse explícitamente `DATABASE_SSL_MODE=verify-full`.
+   Eliminar parámetros `ssl*` de `DATABASE_URL`. `disable` sigue siendo una opción
+   explícita para desarrollo privado, pero no es necesaria para PostgreSQL de Railway.
+   Tras actualizar, eliminar el override `disable` o cambiarlo a `require` en el
+   servicio backend, desplegar y abrir una terminal del nuevo contenedor antes de migrar.
 6. Publicar código y migraciones después de verificar estas condiciones. Esta
    revisión no ejecutó ninguno de esos pasos en Railway.
 

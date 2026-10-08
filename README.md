@@ -1637,7 +1637,7 @@ Indexes: `driver_id`, `status`, `bus_id`
 
 ### PostgreSQL
 
-Add a Railway PostgreSQL plugin to your project. Railway automatically injects `DATABASE_URL` as an environment variable. The connection pool uses SSL in production (`NODE_ENV=production`) with `rejectUnauthorized: false` to support Railway's self-signed certificates.
+Add a Railway PostgreSQL plugin to your project. Railway automatically injects `DATABASE_URL` as an environment variable. In production (`NODE_ENV=production`), private `*.railway.internal` hosts use TLS with self-signed certificate compatibility unless a CA or explicit SSL mode is configured. Public hosts require certificate validation. Set `DATABASE_SSL_CA` to use a trusted CA with `verify-full`. Remove any earlier `DATABASE_SSL_MODE=disable` override to enable TLS. The API and migrations share this configuration.
 
 ### Redis
 

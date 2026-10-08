@@ -17,6 +17,22 @@ test("production PostgreSQL verifies certificates and rejects URL overrides", ()
   assert.throws(() => databaseOptions({ ...env, DATABASE_SSL_MODE: "prefer" }));
 });
 
+test("Railway private PostgreSQL keeps TLS with self-signed certificates without weakening public hosts", () => {
+  const env = { NODE_ENV: "production", DATABASE_URL: "postgres://user:pass@postgres.railway.internal/db" };
+  assert.deepEqual(databaseOptions(env).ssl, { rejectUnauthorized: false });
+  assert.deepEqual(databaseOptions({ ...env, DATABASE_SSL_CA: "test-ca" }).ssl, { rejectUnauthorized: true, ca: "test-ca" });
+  assert.equal(databaseOptions({ ...env, DATABASE_SSL_MODE: "verify-full" }).ssl.rejectUnauthorized, true);
+  assert.equal(databaseOptions({ ...env, DATABASE_SSL_MODE: "disable" }).ssl, false);
+  assert.equal(databaseOptions({ ...env, NODE_ENV: "development" }).ssl, false);
+  for (const host of ["db.example.com", "railway.internal.attacker.test", "fake-railway.internal"]) {
+    const config = { ...env, DATABASE_URL: `postgres://user:pass@${host}/db` };
+    assert.equal(databaseOptions(config).ssl.rejectUnauthorized, true);
+    assert.throws(() => databaseOptions({ ...config, DATABASE_SSL_MODE: "require" }));
+  }
+  assert.throws(() => databaseOptions({ ...env, DATABASE_SSL_MODE: "require", DATABASE_SSL_CA: "test-ca" }));
+  assert.throws(() => databaseOptions({ ...env, DATABASE_URL: env.DATABASE_URL + "?sslmode=disable" }));
+});
+
 test("JWT rejects default secrets, unexpected algorithms and invalid claims", () => {
   const { jwtSecret } = require("../dist/auth/tokenConfig");
   const saved = process.env.JWT_SECRET;

@@ -48,6 +48,36 @@ test('line tenancy: real RLS, HTTP isolation, revocation, drafts, and compatible
   const red=(await execute("INSERT INTO transport_lines(name,short_code) VALUES('Roja','ROJ') RETURNING *")).rows[0];
   for(const [a,l,role] of [[yellowAdmin,yellow,'admin'],[redAdmin,red,'operator'],[viewer,yellow,'viewer']])await execute('INSERT INTO admin_line_memberships(admin_id,line_id,role) VALUES($1,$2,$3)',[a.id,l.id,role]);
   const prefix='/admin/lines/'+yellow.id;
+  await t.test('creates an account and its line role atomically from the access form',async()=>{
+    const endpoint=prefix+'/members';
+    const payload={email:' NewAccess@Test.local ',role:'operator',active:true,new_account:{name:'Nueva cuenta',password:'access-test-password'}};
+    assert.equal((await call(yellowAdmin,endpoint,'PUT',payload)).status,403);
+    assert.equal((await call(viewer,endpoint,'PUT',payload)).status,403);
+    assert.equal((await call(root,endpoint,'PUT',{...payload,role:'superadmin'})).status,400);
+    const created=await call(root,endpoint,'PUT',payload);
+    assert.equal(created.status,200,JSON.stringify(created.body));
+    const account=(await execute('SELECT * FROM admins WHERE email=$1',['newaccess@test.local'])).rows[0];
+    assert.equal(account.is_superadmin,false);
+    assert.equal(account.display_name,'Nueva cuenta');
+    assert.equal(await require('bcrypt').compare(payload.new_account.password,account.password_hash),true);
+    const membership=(await execute('SELECT * FROM admin_line_memberships WHERE admin_id=$1 AND line_id=$2',[account.id,yellow.id])).rows[0];
+    assert.equal(membership.role,'operator');
+    assert.equal(membership.active,true);
+    assert.equal((await call(root,endpoint,'PUT',payload)).status,409);
+    assert.equal((await execute('SELECT password_hash FROM admins WHERE id=$1',[account.id])).rows[0].password_hash,account.password_hash);
+    assert.equal((await call(yellowAdmin,endpoint,'PUT',{email:account.email,role:'viewer',active:true})).status,200);
+    assert.equal((await execute('SELECT role FROM admin_line_memberships WHERE admin_id=$1 AND line_id=$2',[account.id,yellow.id])).rows[0].role,'viewer');
+    await execute("CREATE FUNCTION reject_test_access() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF EXISTS(SELECT 1 FROM admins WHERE id=NEW.admin_id AND email='rollback@test.local') THEN RAISE EXCEPTION 'Test membership rejected' USING ERRCODE='23514'; END IF; RETURN NEW; END $$");
+    await execute('CREATE TRIGGER reject_test_access BEFORE INSERT ON admin_line_memberships FOR EACH ROW EXECUTE FUNCTION reject_test_access()');
+    try {
+      assert.equal((await call(root,endpoint,'PUT',{...payload,email:'rollback@test.local'})).status,400);
+      assert.equal((await execute("SELECT id FROM admins WHERE email='rollback@test.local'")).rows.length,0,'failed membership must roll back the new account');
+    } finally {
+      await execute('DROP TRIGGER reject_test_access ON admin_line_memberships');
+      await execute('DROP FUNCTION reject_test_access()');
+    }
+  });
+
   assert.equal((await call(yellowAdmin,'/admin/lines')).body.lines.length,1);
   assert.equal((await call(yellowAdmin,'/admin/lines/'+red.id+'/vehicles')).status,403);
   assert.equal((await call(yellowAdmin,'/admin/buses')).status,403);

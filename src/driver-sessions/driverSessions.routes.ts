@@ -33,9 +33,11 @@ driverSessionsRouter.get("/current/checkpoints",asyncHandler(async(req,res)=>{
   res.json({session,run,checkins,next:next ? {...next,estimate_seconds:estimateSeconds,projected_arrival_at:estimateSeconds===null?null:new Date(now+estimateSeconds*1000).toISOString(),pace_status:estimateSeconds===null?null:(now+estimateSeconds*1000>new Date(next.expected_at).getTime()+Number(next.tolerance_minutes)*60000?"late":"on_time")} : null,serverNow:now});
 }));
 driverSessionsRouter.get("/catalog",asyncHandler(async(req,res)=>{
+  res.setHeader("Cache-Control","no-store");
   const identity=await driverIdentity({query},req.user!.sub);
-  const vehicles=await query(`SELECT v.id,v.tracking_id AS bus_id,v.economic_number,v.assigned_route_id,v.transport_line_id,l.name AS line_name
+  const vehicles=await query(`SELECT v.id,v.tracking_id AS bus_id,v.economic_number,v.assigned_route_id,v.transport_line_id,l.name AS line_name,r.name AS assigned_route_name
     FROM fleet_vehicles v JOIN transport_lines l ON l.id=v.transport_line_id
+    LEFT JOIN routes r ON r.id=v.assigned_route_id AND r.transport_line_id=v.transport_line_id
     JOIN driver_line_memberships m ON m.line_id=l.id AND m.conductor_id=v.assigned_driver_id
     WHERE v.assigned_driver_id=$1 AND v.archived_at IS NULL AND v.operational_status='available' AND l.active AND m.active`,[identity.conductorId]);
   const routes=await query(`SELECT r.id,r.name,r.transport_line_id,l.color AS line_color,

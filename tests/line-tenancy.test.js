@@ -87,6 +87,19 @@ test('line tenancy: real RLS, HTTP isolation, revocation, drafts, and compatible
   assert.equal(y.status,201,JSON.stringify(y.body));assert.equal(y.body.vehicle.transport_line_id,yellow.id);
   const r=await call(redAdmin,'/admin/lines/'+red.id+'/vehicles','POST',{economic_number:'042',operational_status:'available'});
   assert.equal(r.status,201,JSON.stringify(r.body));
+  await t.test('live map returns economic numbers and line colors without leaking other lines',async()=>{
+    const service=require('../dist/modules/locations/locations.service').locationsService;
+    const previous=service.getLiveBuses;
+    service.getLiveBuses=async()=>[{busId:y.body.vehicle.tracking_id,sourceType:'driver'},{busId:r.body.vehicle.tracking_id,sourceType:'driver'}];
+    try {
+      const response=await call(yellowAdmin,prefix+'/buses/live');
+      assert.equal(response.status,200);
+      assert.equal(response.body.buses.length,1);
+      assert.equal(response.body.buses[0].economicNumber,'042');
+      assert.equal(response.body.buses[0].fleetColor,yellow.color);
+    } finally {service.getLiveBuses=previous;}
+  });
+
   assert.equal((await call(yellowAdmin,prefix+'/vehicles/'+r.body.vehicle.id)).status,404);
   assert.equal((await call(yellowAdmin,prefix+'/vehicles/'+r.body.vehicle.id,'DELETE',{revision:1})).status,404);
   assert.equal((await call(yellowAdmin,prefix+'/vehicles')).body.vehicles.length,1);

@@ -1,0 +1,45 @@
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const express = require('express');
+const jwt = require('jsonwebtoken');
+process.env.JWT_SECRET = 'rate-limit-tests-only';
+const cache = require('../dist/redis/cache');
+const { rateLimiter } = require('../dist/middleware/rateLimiter');
+
+test('nested API limiters count once and separate admins sharing one IP', async t => {
+  const original = cache.incrementRateLimit;
+  const counts = new Map();
+  cache.incrementRateLimit = async (prefix, id) => {
+    const key = prefix + ':' + id;
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+    return counts.get(key);
+  };
+  t.after(() => { cache.incrementRateLimit = original; });
+  const limiter = rateLimiter({ prefix: 'api', maxRequests: 2, windowSeconds: 60 });
+  const nested = rateLimiter({ prefix: 'api', maxRequests: 2, windowSeconds: 60 });
+  const auth = rateLimiter({ prefix: 'auth', maxRequests: 2, windowSeconds: 60 });
+  const app = express();
+  app.get('/api', limiter, nested, (_req,res)=>res.json({ok:true}));
+  app.get('/login', auth, (_req,res)=>res.json({ok:true}));
+  const server = app.listen(0,'127.0.0.1');
+  await new Promise(resolve=>server.once('listening',resolve));
+  t.after(()=>new Promise(resolve=>server.close(resolve)));
+  const base = 'http://127.0.0.1:' + server.address().port;
+  const token = sub => jwt.sign({sub,role:'admin',identityType:'admin',tokenVersion:1},process.env.JWT_SECRET);
+  const call = (path, bearer) => fetch(base+path,{headers:{'x-forwarded-for':'192.0.2.1',...(bearer?{authorization:'Bearer '+bearer}:{})}});
+  const a = token('admin-a'), b = token('admin-b');
+  assert.equal((await call('/api',a)).status,200);
+  assert.equal((await call('/api',a)).status,200);
+  const blocked = await call('/api',a);
+  assert.equal(blocked.status,429);
+  assert.equal(blocked.headers.get('retry-after'),'60');
+  assert.equal((await call('/api',b)).status,200);
+  assert.equal(counts.get('api:admin:admin-a'),3);
+  assert.equal(counts.get('api:admin:admin-b'),1);
+  assert.equal((await call('/api','invalid-token')).status,200);
+  assert.equal((await call('/api')).status,200);
+  assert.equal((await call('/api')).status,429);
+  assert.equal((await call('/login',a)).status,200);
+  assert.equal((await call('/login',b)).status,200);
+  assert.equal((await call('/login',token('admin-c'))).status,429,'login attempts must still share the IP limit');
+});

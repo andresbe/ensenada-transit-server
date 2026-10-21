@@ -106,10 +106,10 @@ test("independent admin authentication and authorization over HTTP", async (t) =
     assert.equal((await request("/auth/admin-login", credentials)).status, 429);
     limit = 1;
   });
-  await t.test("admin profile, protected routes, tracking and refresh accept an active admin", async () => {
+  await t.test("admin profile and refresh accept an active admin, but driver telemetry does not", async () => {
     assert.equal((await request("/auth/admin/me", undefined, token)).body.user.id, admin.id);
     assert.equal((await request("/protected-admin", undefined, token)).status, 200);
-    assert.equal((await request("/driver-location", {}, token)).status, 200);
+    assert.equal((await request("/driver-location", {}, token)).status, 403);
     const refreshed = await request("/auth/refresh", { token });
     assert.equal(refreshed.status, 200);
     assert.equal(jwt.verify(refreshed.body.token, process.env.JWT_SECRET).identityType, "admin");
@@ -118,9 +118,9 @@ test("independent admin authentication and authorization over HTTP", async (t) =
     for (const role of ["user", "driver", "admin"]) {
       const legacy = jwt.sign({ sub: admin.id, role }, process.env.JWT_SECRET);
       const before = queries.length;
-      assert.equal((await request("/protected-admin", undefined, legacy)).status, 403);
-      assert.equal((await request("/auth/admin/me", undefined, legacy)).status, 403);
-      assert.equal(queries.length, before);
+      assert.equal((await request("/protected-admin", undefined, legacy)).status, 401);
+      assert.equal((await request("/auth/admin/me", undefined, legacy)).status, 401);
+      assert.equal(queries.length, before + 2);
     }
     assert.equal((await request("/protected-admin")).status, 401);
     assert.equal((await request("/protected-admin", undefined, token + "invalid")).status, 401);
@@ -140,7 +140,7 @@ test("independent admin authentication and authorization over HTTP", async (t) =
     assert.equal((await request("/auth/admin-login", credentials)).status, 401);
     assert.equal((await request("/protected-admin", undefined, token)).status, 401);
     assert.equal((await request("/auth/refresh", { token })).status, 401);
-    assert.equal((await request("/driver-location", {}, token)).status, 401);
+    assert.equal((await request("/driver-location", {}, token)).status, 403);
     admin.status = "active";
     admin.token_version = 2;
     assert.equal((await request("/protected-admin", undefined, token)).status, 401);

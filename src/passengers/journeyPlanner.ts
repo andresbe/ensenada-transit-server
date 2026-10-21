@@ -31,7 +31,7 @@ function operating(hours: PlanVariant["operating_hours"], now: number) {
   return hours.start <= hours.end ? local >= hours.start && local <= hours.end : local >= hours.start || local <= hours.end;
 }
 
-export function planDirectRoutes(input: ReturnType<typeof parsePlanInput>, variants: PlanVariant[], buses: LiveBus[], now = Date.now()) {
+export function planDirectRoutes(input: ReturnType<typeof parsePlanInput>, variants: PlanVariant[], buses: Omit<LiveBus, "sourceId">[], now = Date.now()) {
   const candidates = variants.flatMap(variant => {
     if (!operating(variant.operating_hours, now) || variant.coordinates.length < 2) return [];
     const geometry = variant.coordinates.map(([longitude, latitude]) => ({ latitude, longitude }));
@@ -65,7 +65,7 @@ export function planDirectRoutes(input: ReturnType<typeof parsePlanInput>, varia
 }
 
 // Geometry matches describe coverage, never an unregistered boarding location.
-export function recommendRoutes(input: ReturnType<typeof parsePlanInput>, variants: PlanVariant[], buses: LiveBus[], now = Date.now()) {
+export function recommendRoutes(input: ReturnType<typeof parsePlanInput>, variants: PlanVariant[], buses: Omit<LiveBus, "sourceId">[], now = Date.now()) {
   const candidates = variants.map(variant => {
     if (!operating(variant.operating_hours, now) || variant.coordinates.length < 2) return [];
     if (!variant.coordinates.every(p => p.length >= 2 && Number.isFinite(p[0]) && Number.isFinite(p[1]) && Math.abs(p[0]) <= 180 && Math.abs(p[1]) <= 90)) return [];

@@ -64,7 +64,7 @@ const calculateAverageSpeedMps = (
     }
 
     const progressDelta = current.routeProgressMeters - previous.routeProgressMeters;
-    const timeDeltaSeconds = (current.updatedAt - previous.updatedAt) / 1000;
+    const timeDeltaSeconds = (current.timestamp - previous.timestamp) / 1000;
 
     if (progressDelta <= 0 || timeDeltaSeconds <= 0) {
       continue;
@@ -190,7 +190,8 @@ const logProgressDiagnostic = (
   console.log(
     JSON.stringify({
       event,
-      busId: location.busId,
+      sessionId: location.sessionId,
+    busId: location.busId,
       routeId: location.routeId,
       routeVariantId: location.routeVariantId,
       routeVariantDirection: location.routeVariantDirection,
@@ -209,6 +210,7 @@ const logProgressDiagnostic = (
 
 const toLiveBus = (location: LiveBusLocation, now = Date.now()): LiveBus => {
   return {
+    sessionId: location.sessionId,
     busId: location.busId,
     sourceId: location.sourceId,
     sourceType: location.sourceType,
@@ -251,7 +253,7 @@ const mergeLocationsByNewestUpdate = (
   for (const location of locations) {
     const current = merged.get(location.busId);
 
-    if (!current || location.updatedAt >= current.updatedAt) {
+    if (!current || location.timestamp > current.timestamp) {
       merged.set(location.busId, location);
     }
   }
@@ -263,18 +265,23 @@ const putLocationsInMemory = (locations: LiveBusLocation[]) => {
   for (const location of locations) {
     const current = locationsByBusId.get(location.busId);
 
-    if (!current || location.updatedAt >= current.updatedAt) {
+    if (!current || location.timestamp > current.timestamp) {
       locationsByBusId.set(location.busId, location);
     }
   }
 };
 
 export const locationsService = {
+  removeEndedSession(busId:string,sessionId:string) {
+    if(locationsByBusId.get(busId)?.sessionId===sessionId)locationsByBusId.delete(busId);
+    const remaining=(busLocationHistory.get(busId)??[]).filter(point=>point.sessionId!==sessionId);
+    if(remaining.length)busLocationHistory.set(busId,remaining);else busLocationHistory.delete(busId);
+  },
   updateLocation(payload: LocationUpdateRequest): LiveBusLocation {
     const updatedAt = Date.now();
     const previous = locationsByBusId.get(payload.busId);
-    if (previous && previous.timestamp > payload.timestamp) return previous;
-    const history = pruneHistory(busLocationHistory.get(payload.busId) ?? [], updatedAt);
+    if (previous && previous.timestamp >= payload.timestamp) return previous;
+    const history = pruneHistory(busLocationHistory.get(payload.busId) ?? [], updatedAt).filter(point => point.routeVariantId === payload.routeVariantId && point.sessionId === payload.sessionId);
     const routeGeometry = routeGeometryService.getRouteGeometry(payload.routeVariantId);
     const routeSnap = routeGeometryService.snapPointToRoute(payload.routeVariantId, {
       latitude: payload.latitude,
@@ -403,6 +410,8 @@ export const locationsService = {
     destinationPoint: { latitude: number; longitude: number } | undefined,
     includeStale = false,
   ) {
+    // Load current database geometry on every replica, even before its first GPS update.
+    await routeGeometryService.ensureRouteGeometry(routeVariantId);
     routeGeometryService.requireRouteGeometry(routeVariantId);
 
     const userSnap = routeGeometryService.snapPointToRoute(routeVariantId, userPoint);

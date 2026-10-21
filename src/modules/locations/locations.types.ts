@@ -3,6 +3,7 @@ export type SourceType = "driver" | "user";
 export type RouteVariantDirection = "ida" | "vuelta";
 
 export interface LocationUpdateRequest {
+  sessionId?: string;
   sourceId: string;
   sourceType: SourceType;
   busId: string;
@@ -44,6 +45,7 @@ export interface LiveBusLocation extends LocationUpdateRequest {
 }
 
 export interface LiveBus {
+  sessionId?: string;
   busId: string;
   sourceId: string;
   sourceType: SourceType;

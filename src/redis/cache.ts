@@ -87,10 +87,18 @@ export const setLiveBusLocation = async (
   ttlSeconds = env.locationTtlMs / 1000,
 ): Promise<void> => {
   try {
-    await Promise.all([
-      redisClient.set(busLocationKey(busId), JSON.stringify(location), { EX: ttlSeconds }),
-      redisClient.sAdd(liveBusesIndexKey(), busId),
-    ]);
+    // Compare and write atomically across all server processes. Duplicate samples do not renew TTL.
+    await redisClient.eval(`
+      local old = redis.call('GET', KEYS[1])
+      if old then
+        local ok, previous = pcall(cjson.decode, old)
+        if ok and tonumber(previous.timestamp) >= tonumber(ARGV[2]) then return 0 end
+      end
+      redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[3])
+      redis.call('SADD', KEYS[2], ARGV[4])
+      return 1
+    `, {keys: [busLocationKey(busId), liveBusesIndexKey()],
+      arguments: [JSON.stringify(location), String(location.timestamp), String(Math.ceil(ttlSeconds)), busId]});
     console.log("[cache] Live bus location written to Redis", { busId, ttlSeconds });
   } catch (err) {
     console.error("[cache] Redis setLiveBusLocation error:", err);
@@ -111,6 +119,20 @@ export const removeLiveBusLocation = async (busId: string): Promise<void> => {
   }
 };
 
+// Recheck existence in the same atomic operation that removes the index member.
+export const removeMissingLiveBusIndexEntries = async (busIds: string[]): Promise<number> => {
+  let removed = 0;
+  for (const busId of busIds) {
+    removed += Number(await redisClient.eval(`
+      if redis.call('EXISTS', KEYS[1]) == 0 then
+        return redis.call('SREM', KEYS[2], ARGV[1])
+      end
+      return 0
+    `, { keys: [busLocationKey(busId), liveBusesIndexKey()], arguments: [busId] }));
+  }
+  return removed;
+};
+
 export const cleanupLiveBusIndex = async (): Promise<number> => {
   try {
     const busIds = await redisClient.sMembers(liveBusesIndexKey());
@@ -125,14 +147,9 @@ export const cleanupLiveBusIndex = async (): Promise<number> => {
       }),
     );
 
-    if (expiredBusIds.length > 0) {
-      await redisClient.sRem(liveBusesIndexKey(), expiredBusIds);
-      console.log("[cache] Removed expired live bus ids from Redis index", {
-        count: expiredBusIds.length,
-      });
-    }
-
-    return expiredBusIds.length;
+    const removed = await removeMissingLiveBusIndexEntries(expiredBusIds);
+    if (removed > 0) console.log("[cache] Removed expired live bus ids from Redis index", { count: removed });
+    return removed;
   } catch (err) {
     console.error("[cache] Redis cleanupLiveBusIndex error:", err);
     return 0;
@@ -164,10 +181,8 @@ export const getLiveBusLocations = async (): Promise<LiveBusLocation[]> => {
     );
 
     if (expiredBusIds.length > 0) {
-      await redisClient.sRem(liveBusesIndexKey(), expiredBusIds);
-      console.log("[cache] Removed expired live bus ids from Redis index", {
-        count: expiredBusIds.length,
-      });
+      const removed = await removeMissingLiveBusIndexEntries(expiredBusIds);
+      if (removed > 0) console.log("[cache] Removed expired live bus ids from Redis index", { count: removed });
     }
 
     return locations;
@@ -186,13 +201,33 @@ export const incrementRateLimit = async (
 ): Promise<number> => {
   const key = rateLimitKey(prefix, identifier);
   try {
-    const count = await redisClient.incr(key);
-    if (count === 1) {
-      await redisClient.expire(key, windowSeconds);
-    }
+    if(!redisClient.isReady) return 0;
+    const count = Number(await redisClient.eval(`
+      local count = redis.call('INCR', KEYS[1])
+      if count == 1 or redis.call('TTL', KEYS[1]) < 0 then
+        redis.call('EXPIRE', KEYS[1], ARGV[1])
+      end
+      return count
+    `, {keys:[key],arguments:[String(windowSeconds)]}));
     return count;
   } catch (err) {
     console.error(`[cache] Rate limit error for key "${key}":`, err);
     return 0; // fail open
   }
 };
+
+// A delayed end must never remove a newer service using the same vehicle.
+export async function removeEndedSessionLocation(busId:string,sessionId:string):Promise<void> {
+  if(!redisClient.isReady)return;
+  try {
+    await redisClient.eval(`
+      local raw=redis.call('GET',KEYS[1])
+      if not raw then return 0 end
+      local ok,value=pcall(cjson.decode,raw)
+      if not ok or value.sessionId~=ARGV[1] then return 0 end
+      redis.call('DEL',KEYS[1])
+      redis.call('SREM',KEYS[2],ARGV[2])
+      return 1
+    `,{keys:[busLocationKey(busId),liveBusesIndexKey()],arguments:[sessionId,busId]});
+  }catch(error){console.error('[cache] Could not retire ended session location',error);}
+}

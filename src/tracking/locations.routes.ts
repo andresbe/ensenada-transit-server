@@ -83,8 +83,6 @@ trackingRouter.post(
       return;
     }
 
-    const diagnosticContext = recordLocationUpdateReceived(req, payload);
-
     try {
       await validateLocationUpdateAuth(req, payload);
       payload = {...payload,...await canonicalTrackingIds(payload.routeId,payload.routeVariantId)};
@@ -95,6 +93,7 @@ trackingRouter.post(
         const activeVariant=await registerGpsCheckin(req.user.sub,payload);
         if(activeVariant){payload={...payload,...activeVariant};await routeGeometryService.ensureRouteGeometry(payload.routeVariantId);}
       }
+      const diagnosticContext = recordLocationUpdateReceived(req, payload);
       const location = locationsService.updateLocation(payload);
 
       // Persist to Redis for cross-process sharing in the background.
@@ -118,6 +117,8 @@ trackingRouter.post(
           routeVariantId: location.routeVariantId,
           routeVariantDirection: location.routeVariantDirection,
           updatedAt: location.updatedAt,
+          timestamp: location.timestamp,
+          sessionId: location.sessionId,
           routeProgressMeters: location.routeProgressMeters,
           routeTotalDistanceMeters: location.routeTotalDistanceMeters,
           progressRemainingMeters: location.progressRemainingMeters,

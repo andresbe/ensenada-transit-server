@@ -21,7 +21,13 @@ export const extractBearerToken = (req: Request): string | null => {
   return authHeader.slice(7);
 };
 
-async function checkDriverVersion(user: JWTPayload) {
+async function checkCredentialVersion(user: JWTPayload) {
+  if (user.identityType !== "admin" && /^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/i.test(user.sub)) {
+    const result = await query("SELECT status,role,token_version FROM users WHERE id=$1", [user.sub]);
+    const account = result.rows[0];
+    if (!account || account.status !== "active" || account.role !== user.role || !Number.isInteger(user.tokenVersion) || account.token_version !== user.tokenVersion) throw new AppError("Session expired. Sign in again.", 401);
+    return;
+  }
   if (user.role !== "driver" || !user.sub.includes("@")) return;
   const result = await query("SELECT token_version FROM conductores WHERE correo=$1", [user.sub]);
   if (!result.rows[0] || (result.rows[0].token_version ?? 0) !== (user.tokenVersion ?? 0)) throw new AppError("La sesión del conductor expiró. Inicia sesión nuevamente.", 401);
@@ -36,7 +42,7 @@ export const authMiddleware = (req: Request, _res: Response, next: NextFunction)
   }
   try {
     req.user = validateToken(token);
-    void checkDriverVersion(req.user).then(() => next()).catch(next);
+    void checkCredentialVersion(req.user).then(() => next()).catch(next);
   } catch (err) {
     next(err);
   }
@@ -53,7 +59,7 @@ export const optionalAuthMiddleware = (req: Request, _res: Response, next: NextF
 
   try {
     req.user = validateToken(token);
-    void checkDriverVersion(req.user).then(() => next()).catch(next);
+    void checkCredentialVersion(req.user).then(() => next()).catch(next);
   } catch (err) {
     next(err);
   }

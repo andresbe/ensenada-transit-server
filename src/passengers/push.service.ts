@@ -21,9 +21,9 @@ async function expoRequest(path: string, body: unknown, fetcher: typeof fetch) {
 // Run from a dedicated worker. Tokens and payloads are never written to logs.
 export async function deliverPublishedAlerts(fetcher: typeof fetch = fetch) {
   await query(`INSERT INTO notification_deliveries(user_id,device_id,alert_id)
-    SELECT DISTINCT d.user_id,d.id,a.id FROM passenger_devices d JOIN user_preferences p ON p.user_id=d.user_id
-    JOIN notification_subscriptions s ON s.user_id=d.user_id JOIN alerts a ON a.route_id=s.route_id OR (a.route_id IS NULL AND (a.transport_line_id IS NULL OR EXISTS(SELECT 1 FROM routes sr WHERE sr.id=s.route_id AND sr.transport_line_id=a.transport_line_id)))
-    WHERE d.active AND p.push_notifications_enabled AND p.favorite_route_alerts AND a.published AND (a.transport_line_id IS NULL OR EXISTS(SELECT 1 FROM transport_lines l WHERE l.id=a.transport_line_id AND l.active)) AND a.starts_at<=NOW() AND a.expires_at>NOW()
+    SELECT DISTINCT d.user_id,d.id,a.id FROM passenger_devices d JOIN users u ON u.id=d.user_id AND u.status='active' JOIN user_preferences p ON p.user_id=d.user_id
+    JOIN notification_subscriptions s ON s.user_id=d.user_id JOIN routes sr_visible ON sr_visible.id=s.route_id AND sr_visible.active AND sr_visible.visible_in_app AND (sr_visible.transport_line_id IS NULL OR EXISTS(SELECT 1 FROM transport_lines sl WHERE sl.id=sr_visible.transport_line_id AND sl.active)) JOIN alerts a ON a.route_id=s.route_id OR (a.route_id IS NULL AND (a.transport_line_id IS NULL OR EXISTS(SELECT 1 FROM routes sr WHERE sr.id=s.route_id AND sr.transport_line_id=a.transport_line_id)))
+    WHERE d.active AND p.push_notifications_enabled AND p.favorite_route_alerts AND (a.route_id IS NULL OR EXISTS(SELECT 1 FROM routes vr WHERE vr.id=a.route_id AND vr.active AND vr.visible_in_app AND (vr.transport_line_id IS NULL OR EXISTS(SELECT 1 FROM transport_lines vl WHERE vl.id=vr.transport_line_id AND vl.active)))) AND a.published AND (a.transport_line_id IS NULL OR EXISTS(SELECT 1 FROM transport_lines l WHERE l.id=a.transport_line_id AND l.active)) AND a.starts_at<=NOW() AND a.expires_at>NOW()
     AND COALESCE(a.published_at,a.created_at)>=s.created_at ON CONFLICT DO NOTHING`);
   // A lease allows recovery after worker restarts. Delivery is at least once.
   const pending = await query(`WITH candidates AS (
@@ -36,10 +36,10 @@ export async function deliverPublishedAlerts(fetcher: typeof fetch = fetch) {
       `SELECT d.token,a.id AS alert_id,a.route_id,
       CASE WHEN p.language='en' THEN COALESCE(a.title_en,a.title_es) ELSE a.title_es END AS title,
       CASE WHEN p.language='en' THEN COALESCE(a.description_en,a.description_es) ELSE a.description_es END AS body
-      FROM passenger_devices d JOIN user_preferences p ON p.user_id=d.user_id JOIN alerts a ON a.id=$2
+      FROM passenger_devices d JOIN users u ON u.id=d.user_id AND u.status='active' JOIN user_preferences p ON p.user_id=d.user_id JOIN alerts a ON a.id=$2
       WHERE d.id=$1 AND d.user_id=$3 AND d.active AND p.push_notifications_enabled AND p.favorite_route_alerts
-      AND a.published AND (a.transport_line_id IS NULL OR EXISTS(SELECT 1 FROM transport_lines l WHERE l.id=a.transport_line_id AND l.active)) AND a.starts_at<=NOW() AND a.expires_at>NOW()
-      AND EXISTS(SELECT 1 FROM notification_subscriptions s WHERE s.user_id=d.user_id AND (s.route_id=a.route_id OR (a.route_id IS NULL AND (a.transport_line_id IS NULL OR EXISTS(SELECT 1 FROM routes sr WHERE sr.id=s.route_id AND sr.transport_line_id=a.transport_line_id)))))`,
+      AND (a.route_id IS NULL OR EXISTS(SELECT 1 FROM routes vr WHERE vr.id=a.route_id AND vr.active AND vr.visible_in_app AND (vr.transport_line_id IS NULL OR EXISTS(SELECT 1 FROM transport_lines vl WHERE vl.id=vr.transport_line_id AND vl.active)))) AND a.published AND (a.transport_line_id IS NULL OR EXISTS(SELECT 1 FROM transport_lines l WHERE l.id=a.transport_line_id AND l.active)) AND a.starts_at<=NOW() AND a.expires_at>NOW()
+      AND EXISTS(SELECT 1 FROM notification_subscriptions s JOIN routes sr_visible ON sr_visible.id=s.route_id AND sr_visible.active AND sr_visible.visible_in_app AND (sr_visible.transport_line_id IS NULL OR EXISTS(SELECT 1 FROM transport_lines sl WHERE sl.id=sr_visible.transport_line_id AND sl.active)) WHERE s.user_id=d.user_id AND (s.route_id=a.route_id OR (a.route_id IS NULL AND (a.transport_line_id IS NULL OR EXISTS(SELECT 1 FROM routes sr WHERE sr.id=s.route_id AND sr.transport_line_id=a.transport_line_id)))))`,
       [job.device_id, job.alert_id, job.user_id],
     );
     const item = current.rows[0];

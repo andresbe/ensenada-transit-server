@@ -14,6 +14,7 @@ test('Google login verifies identity and securely links existing passenger accou
   if(sql.includes('SELECT subject FROM user_social_identities'))return {rows:linked?[{subject:'another-subject'}]:[]};
   if(sql.includes('FROM user_social_identities'))return {rows:existing?[existing]:[]};
   if(sql.includes('lower(email)'))return {rows:collision?[collision]:[]};
+  if(sql.includes('UPDATE users SET password_hash=NULL'))return {rows:[{...collision,password_hash:undefined,auth_provider:'google',token_version:2}]};
   if(sql.includes('INSERT INTO users('))return {rows:[{id:'new-user',status:'active',role:'user',auth_provider:'google'}]};
   return {rows:[]};
  }});
@@ -39,7 +40,7 @@ test('Google login verifies identity and securely links existing passenger accou
  calls=[];claims.email='PERSON@gmail.com';
  assert.equal((await googleUser('token')).id,'password-user');
  assert.ok(calls.some(x=>x.sql.includes('INSERT INTO user_social_identities')&&x.params[1]==='password-user'));
- assert.ok(!calls.some(x=>x.sql.includes('UPDATE users')));
+ assert.ok(calls.some(x=>x.sql.includes('UPDATE users SET password_hash=NULL')));
  calls=[];claims.email='person@company.com';claims.hd='company.com';
  assert.equal((await googleUser('token')).id,'password-user');
  linked=true;await assert.rejects(googleUser('token'),{statusCode:409});linked=false;

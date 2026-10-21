@@ -1,3 +1,5 @@
+import { directionEvidence } from "./directionEvidence";
+import { AppError } from "../shared/errors";
 import { getClient, query } from "../db";
 import { driverIdentity } from "./driverSessions.service";
 import { checkpointStatus, qualifiesForCheckin } from "./checkpointRules";
@@ -22,13 +24,27 @@ export async function beginCheckpointRun(db:Database,sessionId:string,routeId:st
 
 // Only authenticated driver telemetry reaches this function, never passenger observations.
 export async function registerGpsCheckin(subject:string,payload:LocationUpdateRequest) {
-  if(payload.sourceType!=="driver" || !Number.isFinite(payload.accuracy) || payload.accuracy!>50 || payload.accuracy!<0 || Date.now()-payload.timestamp>120000 || payload.timestamp>Date.now()+10000) return;
+  if(payload.sourceType!=="driver") return;
+  if(!payload.sessionId)throw new AppError("sessionId es obligatorio para el envío de ubicación.",400);
+  const precise = Number.isFinite(payload.accuracy) && payload.accuracy!<=50 && payload.accuracy!>=0 && Date.now()-payload.timestamp<=120000 && payload.timestamp<=Date.now()+10000;
   const db=await getClient();
   try {
     await db.query("BEGIN");
     const identity=await driverIdentity(db,subject);
     const session=(await db.query("SELECT * FROM driver_sessions WHERE status='active' AND bus_id=$1 AND route_id=$2 AND (conductor_id=$3 OR driver_id=$4) FOR UPDATE",[payload.busId,payload.routeId,identity.conductorId,identity.userId])).rows[0];
-    if(!session || payload.timestamp<new Date(session.started_at).getTime() || (session.last_checkpoint_gps_at && payload.timestamp<=new Date(session.last_checkpoint_gps_at).getTime())) {await db.query("COMMIT");return;}
+    if(payload.sessionId && (!session || session.id!==payload.sessionId)) throw new AppError("El servicio ya no está activo.",409);
+    if(!session)throw new AppError("El servicio ya no está activo.",409);
+    if(payload.timestamp<new Date(session.started_at).getTime()) throw new AppError("Ubicación anterior al servicio activo.",422);
+    if (session.last_location && session.last_location.timestamp >= payload.timestamp) {
+      await db.query("COMMIT");
+      return session.last_location as LocationUpdateRequest;
+    }
+    if (session.last_location) {
+      const seconds = (payload.timestamp - session.last_location.timestamp) / 1000;
+      if (seconds > 0 && haversineDistanceMeters(payload,session.last_location) / seconds > 40) {
+        throw new AppError("Salto GPS no plausible. Espera una ubicación precisa.",422);
+      }
+    }
     // Lock the route against concurrent checkpoint/geometry edits while taking a snapshot.
     await db.query("SELECT id FROM routes WHERE id=$1 FOR SHARE",[session.route_id]);
     let run=(await db.query("SELECT * FROM driver_checkpoint_runs WHERE session_id=$1 AND ended_at IS NULL",[session.id])).rows[0];
@@ -36,45 +52,30 @@ export async function registerGpsCheckin(subject:string,payload:LocationUpdateRe
       await beginCheckpointRun(db,session.id,session.route_id,session.variant_id,session.started_at);
       run=(await db.query("SELECT * FROM driver_checkpoint_runs WHERE session_id=$1 AND ended_at IS NULL",[session.id])).rows[0];
     }
-    if(run && run.variant_id!==payload.routeVariantId) {
-      const variants=(await db.query("SELECT id,coordinates,direction FROM route_variants WHERE route_id=$1 AND id=ANY($2::uuid[])",[session.route_id,[run.variant_id,payload.routeVariantId]])).rows;
-      const old=variants.find(v=>v.id===run.variant_id),next=variants.find(v=>v.id===payload.routeVariantId);
-      const oldEnd=old?.coordinates?.at(-1),newStart=next?.coordinates?.[0];
-      // A changed direction flag alone cannot reset the clock; GPS must be at the terminal.
-      if(payload.timestamp-new Date(run.started_at).getTime()>=60000 && oldEnd && newStart && old?.direction!==next?.direction && next?.direction===payload.routeVariantDirection && haversineDistanceMeters(payload,{longitude:oldEnd[0],latitude:oldEnd[1]})<=150 && haversineDistanceMeters(payload,{longitude:newStart[0],latitude:newStart[1]})<=150) {
-        await db.query("UPDATE driver_checkpoint_runs SET ended_at=$2 WHERE id=$1",[run.id,new Date(payload.timestamp)]);
-        await beginCheckpointRun(db,session.id,session.route_id,payload.routeVariantId,new Date(payload.timestamp));
-        run=(await db.query("SELECT * FROM driver_checkpoint_runs WHERE session_id=$1 AND ended_at IS NULL",[session.id])).rows[0];
-      }
-    }
-    if(run && run.variant_id===payload.routeVariantId) {
-      // Process only the next point: being near a later stop cannot skip prior controls.
-      const point=(await db.query("SELECT * FROM driver_checkins WHERE run_id=$1 AND arrived_at IS NULL ORDER BY sequence LIMIT 1",[run.id])).rows[0];
-      if(point && qualifiesForCheckin(payload,point as {latitude:number;longitude:number;radius_meters:number},new Date(run.started_at).getTime())) {
-        await db.query("UPDATE driver_checkins SET arrived_at=$2,received_at=now(),gps_accuracy=$3 WHERE id=$1 AND arrived_at IS NULL",[point.id,new Date(payload.timestamp),payload.accuracy]);
-      }
-    }
-    if (run && run.variant_id===payload.routeVariantId && payload.timestamp-new Date(run.started_at).getTime()>=60000 && (payload.speed??0)>=1 && Number.isFinite(payload.heading)) {
-      const counts=(await db.query("SELECT count(*)::int AS total,count(*) FILTER(WHERE arrived_at IS NULL)::int AS pending FROM driver_checkins WHERE run_id=$1",[run.id])).rows[0];
-      if(counts.total>0 && counts.pending===0) {
-        const variants=(await db.query("SELECT id,direction,coordinates FROM route_variants WHERE route_id=$1",[session.route_id])).rows;
-        const old=variants.find(v=>v.id===run.variant_id),next=variants.find(v=>v.id!==run.variant_id);
-        const end=old?.coordinates?.at(-1),path=next ? geometry(next.coordinates) : [];
-        if(end&&path.length>1&&haversineDistanceMeters(payload,{longitude:end[0],latitude:end[1]})<=150&&haversineDistanceMeters(payload,path[0])<=150) {
-          const snap=findNearestPointOnPolyline(payload,path),a=path[snap.segmentIndex],b=path[snap.segmentIndex+1];
-          const bearing=b ? (Math.atan2((b.longitude-a.longitude)*Math.cos(a.latitude*Math.PI/180),b.latitude-a.latitude)*180/Math.PI+360)%360 : 0;
-          const turn=Math.abs(((payload.heading!-bearing+540)%360)-180);
-          if(snap.distanceFromRouteMeters<=50&&snap.progressMeters>=10&&snap.progressMeters<=150&&turn<=45) {
-            await db.query("UPDATE driver_checkpoint_runs SET ended_at=$2 WHERE id=$1",[run.id,new Date(payload.timestamp)]);
-            await beginCheckpointRun(db,session.id,session.route_id,next!.id,new Date(payload.timestamp));
-            run=(await db.query("SELECT * FROM driver_checkpoint_runs WHERE session_id=$1 AND ended_at IS NULL",[session.id])).rows[0];
-          }
+    if(run && precise) {
+      const variants=(await db.query("SELECT id,direction,coordinates FROM route_variants WHERE route_id=$1",[session.route_id])).rows;
+      const current=variants.find(v=>v.id===run.variant_id),next=variants.find(v=>v.direction!==run.direction);
+      if(current) {
+        const evidence=directionEvidence(session.direction_evidence??{},run.id,new Date(run.started_at).getTime(),current,next,payload);
+        if(evidence.switchTo) {
+          const transitionAt = new Date(evidence.state.candidateAt ?? payload.timestamp);
+          await db.query("UPDATE driver_checkpoint_runs SET ended_at=$2 WHERE id=$1",[run.id,transitionAt]);
+          await beginCheckpointRun(db,session.id,session.route_id,evidence.switchTo,transitionAt);
+          run=(await db.query("SELECT * FROM driver_checkpoint_runs WHERE session_id=$1 AND ended_at IS NULL",[session.id])).rows[0];
+          await db.query("UPDATE driver_sessions SET direction_evidence='{}'::jsonb WHERE id=$1",[session.id]);
+        } else {
+          await db.query("UPDATE driver_sessions SET direction_evidence=$2::jsonb WHERE id=$1",[session.id,JSON.stringify(evidence.state)]);
         }
       }
+      // Missed controls stay unverified instead of blocking later observed controls.
+      const points=(await db.query("SELECT * FROM driver_checkins WHERE run_id=$1 AND arrived_at IS NULL ORDER BY sequence",[run.id])).rows;
+      const point=points.find(point=>qualifiesForCheckin(payload,point,new Date(run.started_at).getTime()));
+      if(point) await db.query("UPDATE driver_checkins SET arrived_at=$2,received_at=now(),gps_accuracy=$3 WHERE id=$1 AND arrived_at IS NULL",[point.id,new Date(payload.timestamp),payload.accuracy]);
     }
-    await db.query("UPDATE driver_sessions SET last_checkpoint_gps_at=$2 WHERE id=$1",[session.id,new Date(payload.timestamp)]);
+    const accepted:LocationUpdateRequest = {...payload, ...(run ? {routeVariantId:run.variant_id,routeVariantDirection:run.direction} : {})};
+    await db.query("UPDATE driver_sessions SET last_checkpoint_gps_at=$2,last_location=$3::jsonb,last_heartbeat_at=now(),last_gps_at=CASE WHEN $5 THEN to_timestamp($4::double precision/1000) ELSE last_gps_at END WHERE id=$1",[session.id,new Date(payload.timestamp),JSON.stringify(accepted),payload.timestamp,precise]);
     await db.query("COMMIT");
-    return run ? {routeVariantId:run.variant_id as string,routeVariantDirection:run.direction as "ida"|"vuelta"} : undefined;
+    return accepted;
   } catch(error) {await db.query("ROLLBACK");throw error;} finally {db.release();}
 }
 

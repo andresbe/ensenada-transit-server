@@ -2,7 +2,7 @@ import sharp from "sharp";
 import { randomUUID } from "node:crypto";
 import { getClient, query } from "../db";
 import { AppError } from "../shared/errors";
-import { USER_COLUMNS } from "./users.service";
+import { USER_COLUMNS } from "./columns";
 import type { User } from "../types";
 
 export async function validateProfile(body: unknown) {

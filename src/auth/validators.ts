@@ -22,6 +22,7 @@ export const validatePassword = (password: unknown): string => {
   if (typeof password !== "string" || password.length < 8) {
     throw new AppError("password must be at least 8 characters.", 400);
   }
+  if (Buffer.byteLength(password,"utf8") > 72) throw new AppError("La contraseña no debe exceder 72 bytes UTF-8.",400);
   return password;
 };
 

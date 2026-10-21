@@ -1,3 +1,4 @@
+process.env.JWT_SECRET='journey-planner-isolated-test';
 const {test}=require('node:test');
 const assert=require('node:assert/strict');
 const {planDirectRoutes,parsePlanInput,recommendRoutes}=require('../dist/passengers/journeyPlanner');

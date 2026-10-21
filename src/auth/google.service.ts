@@ -26,12 +26,12 @@ export async function googleUser(token: string, password?: string): Promise<User
     await client.query("BEGIN");
     // Serialize simultaneous logins for the same verified Google identity.
     await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", ["google:" + identity.subject]);
-    const existing = await client.query<User>(`SELECT u.id,u.email,u.display_name,u.photo_url,u.auth_provider,u.role,u.status,u.is_tester,u.created_at,u.updated_at
+    const existing = await client.query<User>(`SELECT u.id,u.email,u.display_name,u.photo_url,u.auth_provider,u.role,u.status,u.is_tester,u.created_at,u.updated_at,u.token_version
       FROM user_social_identities i JOIN users u ON u.id=i.user_id WHERE i.provider='google' AND i.subject=$1 FOR UPDATE OF u`, [identity.subject]);
     let user = existing.rows[0];
     if (user && (user.status !== "active" || user.role !== "user")) throw new AppError("Account unavailable.", 403);
     if (!user) {
-      const collision = await client.query<User & { password_hash: string | null }>(`SELECT id,email,display_name,photo_url,auth_provider,role,status,is_tester,created_at,updated_at,password_hash
+      const collision = await client.query<User & { password_hash: string | null }>(`SELECT id,email,display_name,photo_url,auth_provider,role,status,is_tester,created_at,updated_at,token_version,password_hash
         FROM users WHERE lower(email)=$1 FOR UPDATE`, [identity.email]);
       if (collision.rows.length > 1) throw new AppError("Use your original sign-in method.", 409);
       const account = collision.rows[0];
@@ -43,11 +43,14 @@ export async function googleUser(token: string, password?: string): Promise<User
           if (password === undefined) throw new AppError("Confirm your password to link Google.", 428);
           if (!account.password_hash || !password || Buffer.byteLength(password, "utf8") > 72 || !await bcrypt.compare(password, account.password_hash)) throw new AppError("Invalid password.", 401);
         }
-        const { password_hash: _hash, ...publicUser } = account;
-        user = publicUser;
+        await client.query("UPDATE passenger_devices SET active=FALSE WHERE user_id=$1", [account.id]);
+        // Ownership has been established by Google (or the additional password).
+        // Never retain a credential created before that ownership was established.
+        user = (await client.query<User>(`UPDATE users SET password_hash=NULL,auth_provider='google',updated_at=now()
+          WHERE id=$1 RETURNING id,email,display_name,photo_url,auth_provider,role,status,is_tester,created_at,updated_at,token_version`, [account.id])).rows[0];
       } else {
         const inserted = await client.query<User>(`INSERT INTO users(email,display_name,photo_url,auth_provider,role,status)
-        VALUES($1,$2,$3,'google','user','active') RETURNING id,email,display_name,photo_url,auth_provider,role,status,is_tester,created_at,updated_at`, [identity.email, identity.name, identity.picture]);
+        VALUES($1,$2,$3,'google','user','active') RETURNING id,email,display_name,photo_url,auth_provider,role,status,is_tester,created_at,updated_at,token_version`, [identity.email, identity.name, identity.picture]);
         user = inserted.rows[0];
       }
       await client.query("INSERT INTO user_social_identities(provider,subject,user_id) VALUES('google',$1,$2)", [identity.subject, user.id]);

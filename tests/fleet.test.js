@@ -12,7 +12,7 @@ test("fleet migration, CRUD, sessions, telemetry ownership and admin authorizati
   await require("../scripts/migration-runner").migrate(client,path.join(__dirname,"../src/db/migrations"),()=>{});
   const db=require("../dist/db");db.query=execute;db.getClient=async()=>client;
   const {saveVehicle,archiveVehicle,getVehicle}=require("../dist/fleet/fleet.service");
-  const {startSession}=require("../dist/driver-sessions/driverSessions.service");
+  const {startSession,endSession}=require("../dist/driver-sessions/driverSessions.service");
   const {validateLocationUpdateAuth}=require("../dist/tracking/locationAuth");
   const hash="$2b$12$R9h/cIPz0gi.URNNX3kh2OPST9/PgBkqquzi.Ss7KIUgO2t0jWMUW";
   const admin=(await pg.query("INSERT INTO admins(email,password_hash,is_superadmin) VALUES('fleet@test.local',$1,true) RETURNING *",[hash])).rows[0];
@@ -28,22 +28,25 @@ test("fleet migration, CRUD, sessions, telemetry ownership and admin authorizati
   await assert.rejects(saveVehicle(vehicle.id,{...payload,revision:1,tracking_id:"changed"},admin.id),{statusCode:400});
   vehicle=await saveVehicle(vehicle.id,{...payload,economic_number:"042-A",revision:1},admin.id);
   assert.equal(vehicle.tracking_id,"legacy-bus-42");
-  const session=await startSession(driver.correo,{bus_id:vehicle.tracking_id});
+  const routeId=(await pg.query("INSERT INTO routes(name,short_name) VALUES('Test route','T') RETURNING id")).rows[0].id;
+  const session=await startSession(driver.correo,{bus_id:vehicle.tracking_id,route_id:routeId});
   assert.equal(session.conductor_id,driver.id);assert.equal(session.driver_id,null);assert.equal(session.vehicle_id,vehicle.id);
-  await assert.rejects(startSession(other.correo,{bus_id:vehicle.tracking_id}),{statusCode:403});
+  await assert.rejects(startSession(other.correo,{bus_id:vehicle.tracking_id,route_id:routeId}),{statusCode:403});
   await assert.rejects(archiveVehicle(vehicle.id,vehicle.revision,admin.id),{statusCode:409});
   await assert.rejects(saveVehicle(vehicle.id,{...payload,assigned_driver_id:other.id,revision:vehicle.revision},admin.id),{statusCode:409});
-  const location={sourceType:"driver",sourceId:driver.correo,busId:vehicle.tracking_id};
-  await validateLocationUpdateAuth({user:{sub:driver.correo,role:"driver"}},location);
-  await assert.rejects(validateLocationUpdateAuth({},location),{statusCode:403});
-  await assert.rejects(validateLocationUpdateAuth({user:{sub:other.correo,role:"driver"}},{...location,sourceId:other.correo}),{statusCode:403});
-  const replacement=await startSession(driver.correo,{bus_id:vehicle.tracking_id});
+  const location={sessionId:session.id,routeId,sourceType:"driver",sourceId:driver.correo,busId:vehicle.tracking_id};
+  await validateLocationUpdateAuth({header:()=>undefined,user:{sub:driver.correo,role:"driver"}},location);
+  await assert.rejects(validateLocationUpdateAuth({header:()=>undefined},location),{statusCode:401});
+  await assert.rejects(validateLocationUpdateAuth({header:()=>undefined,user:{sub:other.correo,role:"driver"}},{...location,sourceId:other.correo}),{statusCode:403});
+  await assert.rejects(startSession(driver.correo,{bus_id:vehicle.tracking_id,route_id:routeId}),{statusCode:409});
+  await endSession(driver.correo,session.id);
+  const replacement=await startSession(driver.correo,{bus_id:vehicle.tracking_id,route_id:routeId});
   assert.notEqual(replacement.id,session.id);
   assert.equal((await pg.query("SELECT status FROM driver_sessions WHERE id=$1",[session.id])).rows[0].status,"ended");
   await pg.query("UPDATE driver_sessions SET status='ended',ended_at=now() WHERE id=$1",[replacement.id]);
   await archiveVehicle(vehicle.id,vehicle.revision,admin.id);
   assert.ok((await getVehicle(vehicle.id)).archived_at);
-  await assert.rejects(startSession(driver.correo,{bus_id:vehicle.tracking_id}),{statusCode:403});
+  await assert.rejects(startSession(driver.correo,{bus_id:vehicle.tracking_id,route_id:routeId}),{statusCode:403});
   assert.equal((await pg.query("SELECT count(*)::int n FROM driver_sessions WHERE vehicle_id=$1",[vehicle.id])).rows[0].n,2);
   // Existing UUID user drivers and unregistered IDs still work during rollout.
   const oldDriver=(await pg.query("INSERT INTO users(email,role) VALUES('legacy@test.local','driver') RETURNING id")).rows[0];
@@ -61,7 +64,7 @@ test("fleet migration, CRUD, sessions, telemetry ownership and admin authorizati
     for (const method of ["GET","POST","PUT","DELETE"]) {
       const target=url+(["PUT","DELETE"].includes(method)?"/"+vehicle.id:"");
       assert.equal((await fetch(target,{method})).status,401);
-      const token=jwt.sign({sub:oldDriver.id,role:"driver"},process.env.JWT_SECRET);
+      const token=jwt.sign({sub:oldDriver.id,role:"driver",tokenVersion:1},process.env.JWT_SECRET);
       assert.equal((await fetch(target,{method,headers:{Authorization:"Bearer "+token}})).status,403);
     }
     const token=jwt.sign({sub:admin.id,role:"admin",identityType:"admin",tokenVersion:1},process.env.JWT_SECRET);

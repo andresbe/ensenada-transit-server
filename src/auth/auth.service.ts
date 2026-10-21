@@ -2,23 +2,24 @@ import { jwtSecret } from "./tokenConfig";
 import { googleUser } from "./google.service";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
-import { query } from "../db";
+import { query, getClient } from "../db";
 import { sendWelcomeEmail } from "../email/email.service";
 import { AppError } from "../shared/errors";
 import { JWTPayload, User, UserWithHash } from "../types";
-import { RegisterInput } from "./validators";
+import { validatePassword, RegisterInput } from "./validators";
 import { adminSession, getActiveAdmin } from "./admin.service";
 
 const SALT_ROUNDS = 12;
 const JWT_SECRET = jwtSecret();
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN ?? "7d";
 const USER_COLUMNS =
-  "id, email, display_name, photo_url, auth_provider, role, status, is_tester, created_at, updated_at";
+  "id, email, display_name, photo_url, auth_provider, role, status, is_tester, created_at, updated_at, token_version";
 
 // ── Token helpers ─────────────────────────────────────────────
 
 export const generateToken = (user: User): string => {
   const payload: JWTPayload = {
+    tokenVersion: user.token_version,
     sub: user.id,
     email: user.email,
     role: user.role,
@@ -62,6 +63,7 @@ export const loginConductor = async (
     throw new AppError("Invalid email or password.", 401);
   }
 
+  if(Buffer.byteLength(password,"utf8")>72)throw new AppError("La contraseña no debe exceder 72 bytes UTF-8.",400);
   const valid = isBcryptHash(conductor.password)
     ? await bcrypt.compare(password, conductor.password)
     : false;
@@ -109,24 +111,32 @@ export const register = async (input: RegisterInput): Promise<{ user: User; toke
     throw new AppError("An account with this email already exists.", 409);
   }
 
-  const password_hash = await bcrypt.hash(input.password, SALT_ROUNDS);
+  const password_hash = await bcrypt.hash(validatePassword(input.password), SALT_ROUNDS);
 
-  const result = await query<User>(
-    `INSERT INTO users (email, password_hash, display_name, auth_provider, role, status)
-     VALUES ($1, $2, $3, 'email', 'user', 'active')
-     RETURNING ${USER_COLUMNS}`,
-    [input.email, password_hash, input.display_name ?? null],
-  );
-
-  const user = result.rows[0];
-
-  // Create default preferences
-  await query(
-    `INSERT INTO user_preferences (user_id) VALUES ($1) ON CONFLICT DO NOTHING`,
-    [user.id],
-  );
-
-  const token = generateToken(user);
+  const client = await getClient();
+  let user: User;
+  let token: string;
+  try {
+    await client.query("BEGIN");
+    const result = await client.query<User>(
+      `INSERT INTO users (email, password_hash, display_name, auth_provider, role, status)
+       VALUES ($1, $2, $3, 'email', 'user', 'active')
+       RETURNING ${USER_COLUMNS}`,
+      [input.email, password_hash, input.display_name ?? null],
+    );
+    user = result.rows[0];
+    await client.query(
+      "INSERT INTO user_preferences (user_id) VALUES ($1) ON CONFLICT DO NOTHING",
+      [user.id],
+    );
+    token = generateToken(user);
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
 
   // Fire-and-forget welcome email. SMTP must never block registration.
   if (user.email) {
@@ -139,7 +149,14 @@ export const register = async (input: RegisterInput): Promise<{ user: User; toke
       .catch((error) => console.error("[email] Failed to send welcome email", error));
   }
 
-  return { user, token };
+  const { token_version: _version, ...publicUser } = user;
+  return { user: publicUser, token };
+};
+
+const passengerSession = (user: User) => {
+  const token = generateToken(user);
+  const { token_version: _version, ...publicUser } = user;
+  return { user: publicUser, token };
 };
 
 // ── Login ─────────────────────────────────────────────────────
@@ -160,13 +177,14 @@ export const login = async (
     throw new AppError("Invalid email or password.", 401);
   }
 
+  if (Buffer.byteLength(password, "utf8") > 72) throw new AppError("La contraseña no debe exceder 72 bytes UTF-8.", 400);
   const valid = await bcrypt.compare(password, userRow.password_hash);
   if (!valid) {
     throw new AppError("Invalid email or password.", 401);
   }
 
   const { password_hash: _ph, ...user } = userRow;
-  return { user: user as User, token: generateToken(user as User) };
+  return passengerSession(user);
 };
 
 // ── Social auth ───────────────────────────────────────────────
@@ -185,7 +203,7 @@ export const socialAuth = async (
 ): Promise<{ user: User; token: string }> => {
   if (input.provider !== "google") throw new AppError("This provider is not available.", 503);
   const user = await googleUser(input.provider_token, input.password);
-  return { user, token: generateToken(user) };
+  return passengerSession(user);
 };
 
 // ── Guest auth ────────────────────────────────────────────────
@@ -198,7 +216,7 @@ export const guestAuth = async (): Promise<{ user: User; token: string }> => {
   );
 
   const user = result.rows[0];
-  return { user, token: generateToken(user) };
+  return passengerSession(user);
 };
 
 // ── Refresh token ─────────────────────────────────────────────
@@ -236,5 +254,6 @@ export const refreshToken = async (token: string): Promise<{ user: User; token: 
   }
 
   const user = result.rows[0];
-  return { user, token: generateToken(user) };
+  if (!Number.isInteger(payload.tokenVersion) || payload.tokenVersion !== user.token_version || payload.role !== user.role) throw new AppError("Session expired. Sign in again.", 401);
+  return passengerSession(user);
 };

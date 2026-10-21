@@ -32,6 +32,7 @@ async function main() {
 
   const email = requireEnv("USER_EMAIL").toLowerCase();
   const password = requireEnv("USER_PASSWORD");
+  if(password.length<8 || Buffer.byteLength(password,"utf8")>72)throw new Error("Password must have at least 8 characters and at most 72 UTF-8 bytes.");
   const displayName = optionalEnv("USER_DISPLAY_NAME");
   const pool = new Pool({
     ...databaseOptions(),

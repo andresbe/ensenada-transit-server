@@ -90,14 +90,31 @@ test('line tenancy: real RLS, HTTP isolation, revocation, drafts, and compatible
   await t.test('live map returns economic numbers and line colors without leaking other lines',async()=>{
     const service=require('../dist/modules/locations/locations.service').locationsService;
     const previous=service.getLiveBuses;
-    service.getLiveBuses=async()=>[{busId:y.body.vehicle.tracking_id,sourceType:'driver'},{busId:r.body.vehicle.tracking_id,sourceType:'driver'}];
+    const samples=[],fixtures=[];
+    for(const [vehicle,line] of [[y.body.vehicle,yellow],[r.body.vehicle,red]]) {
+      const email='live-'+line.id+'@test.local';
+      const driver=(await execute("INSERT INTO conductores(correo,password,nombre_usuario) VALUES($1,'unused','Live test') RETURNING id",[email])).rows[0];
+      await execute('INSERT INTO driver_line_memberships(conductor_id,line_id) VALUES($1,$2)',[driver.id,line.id]);
+      await execute('UPDATE fleet_vehicles SET assigned_driver_id=$2 WHERE id=$1',[vehicle.id,driver.id]);
+      const session=(await execute('INSERT INTO driver_sessions(conductor_id,vehicle_id,bus_id,transport_line_id) VALUES($1,$2,$3,$4) RETURNING id',[driver.id,vehicle.id,vehicle.tracking_id,line.id])).rows[0];
+      fixtures.push({driver:driver.id,vehicle:vehicle.id,session:session.id});
+      samples.push({busId:vehicle.tracking_id,sourceType:'driver',sourceId:email,sessionId:session.id,routeId:null,timestamp:Date.now()});
+    }
+    service.getLiveBuses=async()=>samples;
     try {
       const response=await call(yellowAdmin,prefix+'/buses/live');
       assert.equal(response.status,200);
       assert.equal(response.body.buses.length,1);
       assert.equal(response.body.buses[0].economicNumber,'042');
       assert.equal(response.body.buses[0].fleetColor,yellow.color);
-    } finally {service.getLiveBuses=previous;}
+    } finally {service.getLiveBuses=previous;
+      for(const f of fixtures){
+        await execute('DELETE FROM driver_sessions WHERE id=$1',[f.session]);
+        await execute('UPDATE fleet_vehicles SET assigned_driver_id=NULL WHERE id=$1',[f.vehicle]);
+        await execute('DELETE FROM driver_line_memberships WHERE conductor_id=$1',[f.driver]);
+        await execute('DELETE FROM conductores WHERE id=$1',[f.driver]);
+      }
+    }
   });
 
   assert.equal((await call(yellowAdmin,prefix+'/vehicles/'+r.body.vehicle.id)).status,404);
@@ -168,8 +185,8 @@ test('line tenancy: real RLS, HTTP isolation, revocation, drafts, and compatible
   const session=await startSession(driver.correo,{bus_id:y.body.vehicle.tracking_id,route_id:routeId});
   assert.equal(session.transport_line_id,yellow.id);
   await assert.rejects(startSession(driver.correo,{bus_id:'unknown-bus',route_id:routeId}),{statusCode:403});
-  await validateLocationUpdateAuth({header:()=>undefined,user:{sub:driver.correo,role:'driver'}},{sourceType:'driver',sourceId:driver.correo,busId:y.body.vehicle.tracking_id,routeId});
-  await assert.rejects(validateLocationUpdateAuth({header:()=>undefined,user:{sub:driver.correo,role:'driver'}},{sourceType:'driver',sourceId:driver.correo,busId:r.body.vehicle.tracking_id,routeId}),{statusCode:403});
+  await validateLocationUpdateAuth({header:()=>undefined,user:{sub:driver.correo,role:'driver'}},{sessionId:session.id,sourceType:'driver',sourceId:driver.correo,busId:y.body.vehicle.tracking_id,routeId});
+  await assert.rejects(validateLocationUpdateAuth({header:()=>undefined,user:{sub:driver.correo,role:'driver'}},{sessionId:session.id,sourceType:'driver',sourceId:driver.correo,busId:r.body.vehicle.tracking_id,routeId}),{statusCode:403});
   const {refreshToken,generateDriverToken}=require('../dist/auth/auth.service');
   assert.equal((await refreshToken(generateDriverToken(driver.correo))).user.id,driver.correo);
   const driverCatalog=await fetch(base+'/driver-sessions/catalog',{headers:{authorization:'Bearer '+generateDriverToken(driver.correo)}});
@@ -181,7 +198,7 @@ test('line tenancy: real RLS, HTTP isolation, revocation, drafts, and compatible
   assert.deepEqual(catalog.routes[0].variants[0].coordinates,[[-116.6,31.8],[-116.5,31.9]]);
   await execute('UPDATE driver_line_memberships SET active=false WHERE conductor_id=$1',[driver.id]);
   await assert.rejects(startSession(driver.correo,{bus_id:'unknown-bus'}),{statusCode:403});
-  await assert.rejects(validateLocationUpdateAuth({header:()=>undefined,user:{sub:driver.correo,role:'driver'}},{sourceType:'driver',sourceId:driver.correo,busId:'unknown-bus',routeId}),{statusCode:403});
+  await assert.rejects(validateLocationUpdateAuth({header:()=>undefined,user:{sub:driver.correo,role:'driver'}},{sessionId:session.id,sourceType:'driver',sourceId:driver.correo,busId:'unknown-bus',routeId}),{statusCode:403});
   const revokedCatalog=await fetch(base+'/driver-sessions/catalog',{headers:{authorization:'Bearer '+generateDriverToken(driver.correo)}});
   assert.deepEqual(await revokedCatalog.json(),{vehicles:[],routes:[]});
   await execute('UPDATE driver_line_memberships SET active=true WHERE conductor_id=$1',[driver.id]);

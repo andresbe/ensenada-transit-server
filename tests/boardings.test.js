@@ -29,7 +29,7 @@ test('migration and boarding lifecycle enforce identity, replay protection, expi
  const conductor=(await pg.query("INSERT INTO conductores(correo,password,nombre_usuario) VALUES('driver@test.local','test','Test') RETURNING id")).rows[0].id;
  const vehicle=(await pg.query("INSERT INTO fleet_vehicles(tracking_id,economic_number,assigned_driver_id) VALUES('BUS-1','001',$1) RETURNING id",[conductor])).rows[0].id;
  const session=(await pg.query("INSERT INTO driver_sessions(conductor_id,bus_id,vehicle_id,route_id,started_at) VALUES($1,'BUS-1',$2,$3,now()-interval '5 minutes') RETURNING id",[conductor,vehicle,route])).rows[0].id;
- let p={...sample,routeId:route,timestamp:Date.now()};live={...driver,routeId:route,timestamp:p.timestamp,updatedAt:p.timestamp};
+ let p={...sample,routeId:route,timestamp:Date.now()};live={...driver,sessionId:session,routeId:route,timestamp:p.timestamp,updatedAt:p.timestamp};
  const first=await recordBoarding(user,p);assert.equal(first.status,'pending');
  await assert.rejects(recordBoarding(user,p),{statusCode:409});
  await assert.rejects(recordBoarding(other,p,first.id),{statusCode:409});

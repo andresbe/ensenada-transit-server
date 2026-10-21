@@ -6,10 +6,17 @@ import { currentLine } from "./context";
 // Mounted only after requireLine or requireSuperadmin.
 export const adminReadRouter = Router({mergeParams:true});
 adminReadRouter.get("/buses/live",asyncHandler(async(req,res)=>{
-  const vehicles=(await query("SELECT v.tracking_id,v.economic_number,l.color AS fleet_color FROM fleet_vehicles v LEFT JOIN transport_lines l ON l.id=v.transport_line_id WHERE v.archived_at IS NULL")).rows;
+  const vehicles=(await query(`SELECT v.tracking_id,v.economic_number,l.color AS fleet_color,s.id AS session_id,s.route_id,s.started_at,c.correo AS source_id
+    FROM fleet_vehicles v JOIN driver_sessions s ON s.vehicle_id=v.id AND s.bus_id=v.tracking_id AND s.status='active'
+    JOIN conductores c ON c.id=s.conductor_id AND c.id=v.assigned_driver_id
+    LEFT JOIN transport_lines l ON l.id=v.transport_line_id
+    WHERE v.archived_at IS NULL AND v.operational_status='available'`)).rows;
   const byId=new Map(vehicles.map(v=>[v.tracking_id,v]));
   const buses=await locationsService.getLiveBuses(req.query.includeStale==='true');
-  res.json({buses:buses.filter(b=>byId.has(b.busId)).map(b=>({...b, economicNumber:byId.get(b.busId)?.economic_number ?? null, fleetColor:byId.get(b.busId)?.fleet_color ?? null, ...(b.sourceType === "user" ? {sourceId:undefined} : {})}))});
+  res.json({buses:buses.filter(b=>{
+    const service=byId.get(b.busId);
+    return service && b.sourceType==='driver' && b.sessionId===service.session_id && b.routeId===service.route_id && b.sourceId===service.source_id && b.timestamp>=new Date(service.started_at).getTime();
+  }).map(b=>({...b, economicNumber:byId.get(b.busId)?.economic_number ?? null, fleetColor:byId.get(b.busId)?.fleet_color ?? null, ...(b.sourceType === "user" ? {sourceId:undefined} : {})}))});
 }));
 adminReadRouter.get("/alerts",asyncHandler(async(_req,res)=>{
   res.json({alerts:(await query("SELECT a.id,a.route_id,r.name AS route_name,a.title_es AS title,a.description_es AS description,a.category,a.severity,a.published,a.created_at,a.expires_at FROM alerts a LEFT JOIN routes r ON r.id=a.route_id ORDER BY a.created_at DESC,a.id LIMIT 100")).rows});

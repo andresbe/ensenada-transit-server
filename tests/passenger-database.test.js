@@ -72,7 +72,7 @@ test("migrations and passenger APIs on isolated PostgreSQL WASM", async (t) => {
       method,
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${jwt.sign({ sub: who, role: "user" }, process.env.JWT_SECRET)}`,
+        Authorization: `Bearer ${jwt.sign({ sub: who, role: "user", tokenVersion: 1 }, process.env.JWT_SECRET)}`,
       },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
@@ -195,7 +195,7 @@ test("migrations and passenger APIs on isolated PostgreSQL WASM", async (t) => {
             client_id: "report",
           })
         ).status,
-        201,
+        i === 0 ? 201 : 200,
       );
     }
     assert.equal(
@@ -278,7 +278,7 @@ test("migrations and passenger APIs on isolated PostgreSQL WASM", async (t) => {
         "INSERT INTO saved_places(user_id,name,kind,latitude,longitude,client_id) VALUES($1,'Home','home',31.8,-116.6,'home')",
         [owner],
       );
-      const body = { guest_token: jwt.sign({ sub: owner, role: "user" }, process.env.JWT_SECRET) };
+      const body = { guest_token: jwt.sign({ sub: owner, role: "user", tokenVersion: 1 }, process.env.JWT_SECRET) };
       for (let i = 0; i < 2; i++)
         assert.equal((await call("/users/me/guest-data", "POST", body, target)).status, 200);
       assert.equal((await call("/users/me/guest-data", "POST", body, second)).status, 409);

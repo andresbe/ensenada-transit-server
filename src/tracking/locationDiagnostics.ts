@@ -58,6 +58,12 @@ export interface LocationDebugSummary {
 const cadenceByBusId = new Map<string, CadenceState>();
 const recentUpdates: LocationDebugSummary[] = [];
 const maxRecentUpdates = 200;
+const maxCadenceEntries = 1000;
+const cadenceTtlMs = 30 * 60 * 1000;
+const pruneCadence = (now = Date.now()) => {
+  for (const [id, state] of cadenceByBusId) if (now - state.receivedAtMs >= cadenceTtlMs) cadenceByBusId.delete(id);
+};
+setInterval(pruneCadence, 60000).unref();
 
 const toIso = (timestampMs: number): string => new Date(timestampMs).toISOString();
 
@@ -68,7 +74,7 @@ const asObject = (value: unknown): RawPayload => {
 };
 
 const asString = (value: unknown): string | undefined => {
-  return typeof value === "string" && value.trim() !== "" ? value : undefined;
+  return typeof value === "string" && value.trim() !== "" ? value.slice(0, 256) : undefined;
 };
 
 const asNumber = (value: unknown): number | undefined => {
@@ -80,12 +86,6 @@ const getSource = (body: RawPayload, payload?: LocationUpdateRequest): string | 
 };
 
 const getRequestIp = (req: Request): string | undefined => {
-  const forwardedFor = req.headers["x-forwarded-for"];
-
-  if (typeof forwardedFor === "string" && forwardedFor.trim() !== "") {
-    return forwardedFor.split(",")[0]?.trim();
-  }
-
   return req.ip || req.socket.remoteAddress;
 };
 
@@ -164,6 +164,7 @@ export const recordLocationUpdateReceived = (
   const body = asObject(req.body);
   const receivedAtMs = Date.now();
   const receivedAt = toIso(receivedAtMs);
+  pruneCadence(receivedAtMs);
   const previous = cadenceByBusId.get(payload.busId);
   const source = getSource(body, payload);
   const previousSource = previous?.source;
@@ -183,7 +184,7 @@ export const recordLocationUpdateReceived = (
     receivedAtMs,
     serverTimestamp: receivedAtMs,
     source,
-    driverId: body.driverId,
+    driverId: asString(body.driverId),
     previousReceivedAt: previous ? toIso(previous.receivedAtMs) : undefined,
     gapSeconds,
     previousSource,
@@ -198,7 +199,7 @@ export const recordLocationUpdateReceived = (
     receivedAt,
     source,
     sourceId: payload.sourceId,
-    driverId: body.driverId,
+    driverId: asString(body.driverId),
     sourceType: payload.sourceType,
     busId: payload.busId,
     routeId: payload.routeId,
@@ -268,6 +269,8 @@ export const recordLocationUpdateReceived = (
     });
   }
 
+  cadenceByBusId.delete(payload.busId);
+  while (cadenceByBusId.size >= maxCadenceEntries) cadenceByBusId.delete(cadenceByBusId.keys().next().value!);
   cadenceByBusId.set(payload.busId, {
     receivedAtMs,
     source,

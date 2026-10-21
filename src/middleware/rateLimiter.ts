@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { NextFunction, Request, Response } from "express";
 import { incrementRateLimit } from "../redis/cache";
 import { validateToken } from "../auth/auth.service";
@@ -14,7 +15,7 @@ interface RateLimiterOptions {
 
 /**
  * Generic rate limiter middleware backed by Redis.
- * Falls back gracefully (allows the request) when Redis is unavailable.
+ * Authentication fails closed; public API traffic can continue during a Redis outage.
  */
 const countedRequests = new WeakMap<Request, Set<string>>();
 
@@ -32,7 +33,7 @@ export const rateLimiter = (options: RateLimiterOptions) => {
     }
     // Use IP address as the identifier; fall back to a generic key
     const identifier = adminIdentifier ??
-      (req.headers["x-forwarded-for"] as string | undefined)?.split(",")[0]?.trim() ??
+      req.ip ??
       req.socket.remoteAddress ??
       "unknown";
 
@@ -42,7 +43,19 @@ export const rateLimiter = (options: RateLimiterOptions) => {
       options.windowSeconds,
     );
 
-    // incrementRateLimit returns 0 on Redis error → fail open
+    // Authentication fails closed when its shared limiter cannot enforce the budget.
+    if(options.prefix === 'auth' && count === 0) {
+      res.setHeader('Retry-After','30');
+      res.status(503).json({error:{message:'Authentication is temporarily unavailable. Please retry shortly.'}});
+      return;
+    }
+    if(options.prefix === 'auth' && typeof req.body?.email === 'string') {
+      const account=createHash('sha256').update(req.body.email.trim().toLowerCase()).digest('hex');
+      const attempts=await incrementRateLimit('auth-account',account,options.windowSeconds);
+      if(attempts===0){res.setHeader('Retry-After','30');res.status(503).json({error:{message:'Authentication is temporarily unavailable. Please retry shortly.'}});return;}
+      if(attempts>5){res.setHeader('Retry-After',String(options.windowSeconds));res.status(429).json({error:{message:'Too many attempts. Please retry later.'}});return;}
+    }
+    // Public API reads retain their availability policy on a Redis outage.
     if (count > 0 && count > options.maxRequests) {
       res.setHeader("Retry-After", String(options.windowSeconds));
       res.status(429).json({

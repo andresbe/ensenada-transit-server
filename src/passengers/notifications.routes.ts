@@ -26,7 +26,12 @@ notificationsRouter.get('/notification-subscriptions',...account,asyncHandler(as
 }));
 notificationsRouter.post('/notification-subscriptions',...account,asyncHandler(async(req,res)=>{
   const routeId=uuid(record(req.body).route_id);
-  await query('INSERT INTO notification_subscriptions(user_id,route_id) VALUES($1,$2) ON CONFLICT DO NOTHING',[req.user!.sub,routeId]);res.status(201).json({subscribed:true});
+  const result=await query(`INSERT INTO notification_subscriptions(user_id,route_id)
+    SELECT $1,r.id FROM routes r WHERE r.id=$2 AND r.active AND r.visible_in_app
+    AND (r.transport_line_id IS NULL OR EXISTS(SELECT 1 FROM transport_lines l WHERE l.id=r.transport_line_id AND l.active))
+    ON CONFLICT(user_id,route_id) DO UPDATE SET route_id=EXCLUDED.route_id RETURNING route_id`,[req.user!.sub,routeId]);
+  if(!result.rows.length)throw new AppError('Route not found.',404);
+  res.status(201).json({subscribed:true});
 }));
 notificationsRouter.delete('/notification-subscriptions/:routeId',...account,asyncHandler(async(req,res)=>{
   await query('DELETE FROM notification_subscriptions WHERE user_id=$1 AND route_id=$2',[req.user!.sub,uuid(req.params.routeId)]);res.status(204).end();

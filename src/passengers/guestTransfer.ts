@@ -12,7 +12,7 @@ export async function transferGuestData(accountId: string, guestToken: string) {
   try {
     await client.query("BEGIN");
     const identities = await client.query(
-      "SELECT id,auth_provider,status,is_tester FROM users WHERE id IN ($1,$2) ORDER BY id FOR UPDATE",
+      "SELECT id,auth_provider,status,is_tester,token_version FROM users WHERE id IN ($1,$2) ORDER BY id FOR UPDATE",
       [guestId, accountId],
     );
     const guest = identities.rows.find((u) => u.id === guestId),
@@ -35,6 +35,7 @@ export async function transferGuestData(accountId: string, guestToken: string) {
       await client.query("COMMIT");
       return;
     }
+    if (!Number.isInteger(payload.tokenVersion) || guest.token_version !== payload.tokenVersion) throw new AppError("Guest session expired.",401);
     if (guest.status !== "active") throw new AppError("Inactive guest.", 403);
     const favorites = await client.query("SELECT count(*)::int AS total FROM saved_journeys WHERE user_id IN ($1,$2)", [guestId, accountId]);
     if (!account.is_tester && favorites.rows[0].total > 3) throw new AppError("La cuenta y el invitado superan las 3 rutas favoritas. Quita favoritos antes de transferirlos.", 409, { code: "FAVORITES_LIMIT", limit: 3 });

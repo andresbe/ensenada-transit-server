@@ -37,7 +37,7 @@ export async function recordBoarding(userId:string,p:LocationUpdateRequest,board
        JOIN driver_sessions s ON s.vehicle_id=v.id AND s.conductor_id=v.assigned_driver_id AND s.status='active' AND s.route_id=$2
        JOIN conductores c ON c.id=v.assigned_driver_id
        WHERE v.tracking_id=$1 AND v.archived_at IS NULL AND v.operational_status='available'`,[p.busId,p.routeId])).rows[0];
-    if(!vehicle||bus!.sourceId!==vehicle.correo||bus!.timestamp<new Date(vehicle.started_at).getTime()) throw new AppError("El camión no tiene un servicio verificado activo.",409);
+    if(!vehicle||bus!.sessionId!==vehicle.session_id||bus!.sourceId!==vehicle.correo||bus!.timestamp<new Date(vehicle.started_at).getTime()) throw new AppError("El camión no tiene un servicio verificado activo.",409);
     validateBoardingEvidence(p,bus);
     await db.query("UPDATE passenger_boardings SET status='expired',ended_at=now() WHERE user_id=$1 AND status IN ('pending','verified') AND (expires_at<=now() OR created_at<now()-interval '12 hours')",[userId]);
     const previous=(await db.query("SELECT * FROM passenger_boardings WHERE user_id=$1 AND status IN ('pending','verified') FOR UPDATE",[userId])).rows[0];

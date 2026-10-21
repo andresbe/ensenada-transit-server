@@ -1,3 +1,4 @@
+import { parseRouteGeoJson, requiredText } from "./geojson";
 import { currentLine } from "../tenancy/context";
 import { query } from "../db";
 import {
@@ -123,6 +124,9 @@ export const createVariant = async (
   routeId: string,
   input: CreateVariantInput,
 ): Promise<RouteVariant> => {
+  const geometry = parseRouteGeoJson({type:"LineString",coordinates:input.coordinates});
+  const name = requiredText(input.name,"name");
+  if (!["ida","vuelta"].includes(input.direction)) throw new AppError("Invalid direction.",400);
   // Verify route exists
   const routeCheck = await query<{ id: string }>(
     `SELECT id FROM routes WHERE id = $1`,
@@ -138,10 +142,10 @@ export const createVariant = async (
      RETURNING id, route_id, name, direction, coordinates, total_distance_meters, created_at, updated_at`,
     [
       routeId,
-      input.name,
+      name,
       input.direction,
-      JSON.stringify(input.coordinates ?? []),
-      input.total_distance_meters ?? 0,
+      JSON.stringify(geometry.coordinates),
+      geometry.distance,
     ],
   );
   return result.rows[0];

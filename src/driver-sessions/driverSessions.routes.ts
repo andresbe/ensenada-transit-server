@@ -9,10 +9,25 @@ import { apiRateLimiter } from "../middleware/rateLimiter";
 import { AppError } from "../shared/errors";
 import { sendSuccess } from "../shared/response";
 import { uuid } from "../passengers/validation";
-import { driverIdentity, startSession } from "./driverSessions.service";
+import { driverIdentity, startSession, endSession, currentSession } from "./driverSessions.service";
 
 export const driverSessionsRouter = Router();
 driverSessionsRouter.use(authMiddleware,driverMiddleware,apiRateLimiter);
+driverSessionsRouter.get("/current",asyncHandler(async(req,res)=>{
+  res.setHeader("Cache-Control", "no-store");
+  const session=await currentSession(req.user!.sub);
+  if(!session){sendSuccess(res,{session:null});return;}
+  // Authorize through the owned active session, not today's assignment/catalog.
+  const context=(await query(`SELECT v.economic_number AS bus_number,
+    (SELECT row_to_json(details) FROM (
+      SELECT r.id,r.name,r.transport_line_id,l.color AS line_color,
+        (SELECT jsonb_agg(jsonb_build_object('id',rv.id,'name',rv.name,'direction',rv.direction,'coordinates',rv.coordinates)) FROM route_variants rv WHERE rv.route_id=r.id) AS variants,
+        (SELECT COALESCE(jsonb_agg(jsonb_build_object('id',st.id,'variant_id',st.variant_id,'name',st.name,'latitude',st.latitude,'longitude',st.longitude,'sequence',st.sequence) ORDER BY st.sequence,st.id),'[]'::jsonb) FROM stops st WHERE st.route_id=r.id) AS stops
+      FROM routes r LEFT JOIN transport_lines l ON l.id=r.transport_line_id WHERE r.id=s.route_id
+    ) details) AS route
+    FROM driver_sessions s LEFT JOIN fleet_vehicles v ON v.id=s.vehicle_id WHERE s.id=$1`,[session.id])).rows[0];
+  sendSuccess(res,{session:{...session,...context}});
+}));
 driverSessionsRouter.get("/current/checkpoints",asyncHandler(async(req,res)=>{
   const identity=await driverIdentity({query},req.user!.sub);
   const session=(await query("SELECT id,bus_id,started_at FROM driver_sessions WHERE status='active' AND (conductor_id=$1 OR driver_id=$2) ORDER BY started_at DESC LIMIT 1",[identity.conductorId,identity.userId])).rows[0];
@@ -42,7 +57,8 @@ driverSessionsRouter.get("/catalog",asyncHandler(async(req,res)=>{
     WHERE v.assigned_driver_id=$1 AND v.archived_at IS NULL AND v.operational_status='available' AND l.active AND m.active`,[identity.conductorId]);
   const routes=await query(`SELECT r.id,r.name,r.transport_line_id,l.color AS line_color,
     (SELECT jsonb_agg(jsonb_build_object('id',rv.id,'name',rv.name,'direction',rv.direction,'coordinates',rv.coordinates))
-      FROM route_variants rv WHERE rv.route_id=r.id AND jsonb_typeof(rv.coordinates)='array' AND jsonb_array_length(rv.coordinates)>=2) AS variants
+      FROM route_variants rv WHERE rv.route_id=r.id AND jsonb_typeof(rv.coordinates)='array' AND jsonb_array_length(rv.coordinates)>=2) AS variants,
+    (SELECT COALESCE(jsonb_agg(jsonb_build_object('id',st.id,'variant_id',st.variant_id,'name',st.name,'latitude',st.latitude,'longitude',st.longitude,'sequence',st.sequence) ORDER BY st.sequence,st.id),'[]'::jsonb) FROM stops st WHERE st.route_id=r.id) AS stops
     FROM routes r JOIN transport_lines l ON l.id=r.transport_line_id WHERE r.active AND EXISTS(SELECT 1 FROM fleet_vehicles v
       JOIN transport_lines l ON l.id=v.transport_line_id JOIN driver_line_memberships m ON m.line_id=l.id AND m.conductor_id=v.assigned_driver_id
       WHERE v.assigned_driver_id=$1 AND v.archived_at IS NULL AND v.operational_status='available' AND l.active AND m.active
@@ -60,12 +76,7 @@ driverSessionsRouter.post("/start",asyncHandler(async(req,res)=>{
   sendSuccess(res,{session:await startSession(req.user!.sub,req.body)},201);
 }));
 driverSessionsRouter.post("/:sessionId/end",asyncHandler(async(req,res)=>{
-  const identity=await driverIdentity({query},req.user!.sub);
-  const result=await query(`UPDATE driver_sessions SET status='ended',ended_at=now()
-    WHERE id=$1 AND (driver_id=$2 OR conductor_id=$3) AND status='active' RETURNING *`,
-    [uuid(req.params.sessionId),identity.userId,identity.conductorId]);
-  if (!result.rows.length) throw new AppError("Active session not found.",404);
-  sendSuccess(res,{session:result.rows[0]});
+  sendSuccess(res,{session:await endSession(req.user!.sub,req.params.sessionId)});
 }));
 
 driverSessionsRouter.post("/heartbeat",asyncHandler(async(req,res)=>{
@@ -75,8 +86,8 @@ driverSessionsRouter.post("/heartbeat",asyncHandler(async(req,res)=>{
     tracking_samples=COALESCE((SELECT jsonb_agg(p ORDER BY (p->>'timestamp')::double precision) FROM (
       SELECT DISTINCT ON ((p->>'timestamp')::double precision) p FROM jsonb_array_elements(s.tracking_samples || $6::jsonb) p
       ORDER BY (p->>'timestamp')::double precision DESC LIMIT 1440) latest),'[]'::jsonb)
-    WHERE bus_id=$1 AND status='active' AND (conductor_id=$2 OR driver_id=$3) RETURNING id`,
-    [data.busId,identity.conductorId,identity.userId,data.gpsTimestamp,JSON.stringify(data.diagnostics),JSON.stringify(data.samples)]);
+    WHERE bus_id=$1 AND status='active' AND (conductor_id=$2 OR driver_id=$3) AND ($7::uuid IS NULL OR id=$7) RETURNING id`,
+    [data.busId,identity.conductorId,identity.userId,data.gpsTimestamp,JSON.stringify(data.diagnostics),JSON.stringify(data.samples),data.sessionId??null]);
   if(!result.rows.length)throw new AppError("No active assigned session.",409);
   sendSuccess(res,{receivedAt:Date.now(),accepted:data.samples.length});
 }));

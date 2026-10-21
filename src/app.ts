@@ -1,3 +1,4 @@
+import { trustedProxies } from "./config/trustedProxies";
 import { lineManagementRouter } from "./tenancy/management.routes";
 import { scopedLineRouter } from "./tenancy/scoped.routes";
 import { platformRouter } from "./tenancy/platform.routes";
@@ -26,6 +27,7 @@ import { sendSuccess } from "./shared/response";
 import { appUpdatesRouter } from "./app-updates/appUpdates.routes";
 
 export const app = express();
+app.set("trust proxy", trustedProxies());
 
 app.use(cors({ origin: env.corsOrigin }));
 const defaultJsonParser = express.json();

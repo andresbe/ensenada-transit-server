@@ -1,3 +1,5 @@
+import { saveJourney } from "./savedJourneys.service";
+import { visibleRouteSql } from "./visibility";
 import { Router } from "express";
 import { query, getClient } from "../db";
 import { authMiddleware, userAccountMiddleware, adminMiddleware } from "../auth/auth.middleware";
@@ -37,7 +39,7 @@ passengerRouter.get(
       `SELECT id,route_id,stop_id,category,severity,
     CASE WHEN $1='en' THEN COALESCE(title_en,title_es) ELSE title_es END AS title,
     CASE WHEN $1='en' THEN COALESCE(description_en,description_es) ELSE description_es END AS description,
-    created_at,expires_at FROM alerts WHERE (transport_line_id IS NULL OR EXISTS(SELECT 1 FROM transport_lines l WHERE l.id=alerts.transport_line_id AND l.active)) AND published AND starts_at<=NOW() AND expires_at>NOW()
+    created_at,expires_at FROM alerts WHERE (transport_line_id IS NULL OR EXISTS(SELECT 1 FROM transport_lines l WHERE l.id=alerts.transport_line_id AND l.active)) AND (route_id IS NULL OR EXISTS(SELECT 1 FROM routes visible_route WHERE visible_route.id=alerts.route_id AND ${visibleRouteSql("visible_route")})) AND (stop_id IS NULL OR EXISTS(SELECT 1 FROM stops visible_stop JOIN routes visible_route ON visible_route.id=visible_stop.route_id WHERE visible_stop.id=alerts.stop_id AND ${visibleRouteSql("visible_route")})) AND published AND starts_at<=NOW() AND expires_at>NOW()
     AND ($2::uuid IS NULL OR route_id=$2) AND ($3::uuid IS NULL OR stop_id=$3)
     AND ($4::text IS NULL OR category=$4) ORDER BY created_at DESC,id LIMIT $5 OFFSET $6`,
       [language, routeId, stopId, category, limit, offset],
@@ -107,7 +109,7 @@ passengerRouter.get(
     res.json({
       favorites: (
         await query(
-          "SELECT * FROM saved_journeys WHERE user_id=$1 ORDER BY created_at DESC,id LIMIT $2 OFFSET $3",
+          `SELECT j.*, (${visibleRouteSql("r")}) AS available FROM saved_journeys j JOIN routes r ON r.id=j.route_id WHERE j.user_id=$1 ORDER BY j.created_at DESC,j.id LIMIT $2 OFFSET $3`,
           [req.user!.sub, limit, offset],
         )
       ).rows,
@@ -121,52 +123,8 @@ passengerRouter.post(
   apiRateLimiter,
   ...account,
   asyncHandler(async (req, res) => {
-    const b = record(req.body),
-      routeId = uuid(b.route_id),
-      variantId = b.variant_id == null ? null : uuid(b.variant_id);
-    if (
-      variantId &&
-      !(
-        await query("SELECT id FROM route_variants WHERE id=$1 AND route_id=$2", [
-          variantId,
-          routeId,
-        ])
-      ).rows.length
-    )
-      throw new AppError("Variant does not belong to route.", 400);
-    const hasDestination = b.destination_latitude != null || b.destination_longitude != null;
-    const clientId = text(b.client_id, "client_id", 1000);
-    const client = await getClient();
-    try {
-      await client.query("BEGIN");
-      const owner = await client.query("SELECT id,is_tester FROM users WHERE id=$1 FOR UPDATE", [req.user!.sub]);
-      const existing = await client.query("SELECT * FROM saved_journeys WHERE user_id=$1 AND client_id=$2", [req.user!.sub, clientId]);
-      if (existing.rows.length) {
-        await client.query("COMMIT");
-        res.status(200).json({ favorite: existing.rows[0] });
-        return;
-      }
-      const count = await client.query("SELECT count(*)::int AS total FROM saved_journeys WHERE user_id=$1", [req.user!.sub]);
-      if (!owner.rows[0]?.is_tester && count.rows[0].total >= 3) throw new AppError("Puedes guardar hasta 3 rutas favoritas. Quita una antes de agregar otra.", 409, { code: "FAVORITES_LIMIT", limit: 3 });
-    const result = await client.query(
-      `INSERT INTO saved_journeys(user_id,route_id,variant_id,destination_title,destination_latitude,destination_longitude,client_id)
-    VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(user_id,client_id) DO UPDATE SET client_id=EXCLUDED.client_id RETURNING *`,
-      [
-        req.user!.sub,
-        routeId,
-        variantId,
-        b.destination_title == null ? null : text(b.destination_title, "destination_title"),
-        hasDestination ? coordinate(b.destination_latitude, "latitude") : null,
-        hasDestination ? coordinate(b.destination_longitude, "longitude") : null,
-        clientId,
-      ],
-    );
-      await client.query("COMMIT");
-      res.status(201).json({ favorite: result.rows[0] });
-    } catch (error) {
-      await client.query("ROLLBACK");
-      throw error;
-    } finally { client.release(); }
+    const result = await saveJourney(req.user!.sub,req.body);
+    res.status(result.created ? 201 : 200).json({favorite:result.favorite});
 
   }),
 );

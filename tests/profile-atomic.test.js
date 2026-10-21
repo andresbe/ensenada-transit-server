@@ -1,0 +1,26 @@
+const {test}=require('node:test');
+const assert=require('node:assert/strict');
+const path=require('node:path');
+const {PGlite}=require('@electric-sql/pglite');
+const {pgcrypto}=require('@electric-sql/pglite/contrib/pgcrypto');
+test('profile and preferences validate together and roll back together',async t=>{
+ const pg=new PGlite({extensions:{pgcrypto}});t.after(()=>pg.close());
+ const query=async(sql,args)=>args?pg.query(sql,args):(await pg.exec(sql)).at(-1);
+ await require('../scripts/migration-runner').migrate({query},path.join(__dirname,'../src/db/migrations'),()=>{});
+ const db=require('../dist/db'),old=db.getClient;t.after(()=>{db.getClient=old;});
+ let fail=false;
+ db.getClient=async()=>({release(){},query:async(sql,args)=>{if(fail&&sql.startsWith('UPDATE user_preferences'))throw Error('simulated preference failure');return query(sql,args);}});
+ const id=(await query("INSERT INTO users(email,auth_provider,display_name) VALUES('profile@test.local','email','Before') RETURNING id")).rows[0].id;
+ const {updateAccount}=require('../dist/users/users.service');
+ await assert.rejects(updateAccount(id,{display_name:'After',preferences:{language:'fr'}}),{statusCode:400});
+ assert.equal((await query('SELECT display_name FROM users WHERE id=$1',[id])).rows[0].display_name,'Before');
+ fail=true;
+ await assert.rejects(updateAccount(id,{display_name:'After',preferences:{language:'en'}}),/simulated preference failure/);
+ assert.equal((await query('SELECT display_name FROM users WHERE id=$1',[id])).rows[0].display_name,'Before');
+ fail=false;
+ const result=await updateAccount(id,{display_name:'After',preferences:{language:'en',push_notifications_enabled:false}});
+ assert.equal(result.user.display_name,'After');assert.equal(result.preferences.language,'en');assert.equal(result.preferences.push_notifications_enabled,false);
+ const guest=(await query("INSERT INTO users(auth_provider) VALUES('guest') RETURNING id")).rows[0].id;
+ await assert.rejects(updateAccount(guest,{display_name:'Cannot rename'}),{statusCode:403});
+ assert.equal((await updateAccount(guest,{preferences:{language:'es'}})).preferences.language,'es');
+});

@@ -63,7 +63,7 @@ test("route CRUD preserves identities and relations, validates ownership, rolls 
     for (const method of ["PUT","DELETE"]) {
       const url = "http://127.0.0.1:" + server.address().port + "/db-routes/" + route.id;
       assert.equal((await fetch(url,{method})).status,401);
-      const token = jwt.sign({sub:user.id,role:"user"},process.env.JWT_SECRET);
+      const token = jwt.sign({sub:user.id,role:"user",tokenVersion:1},process.env.JWT_SECRET);
       assert.equal((await fetch(url,{method,headers:{authorization:"Bearer " + token}})).status,403);
     }
   } finally { await new Promise(resolve => server.close(resolve)); }

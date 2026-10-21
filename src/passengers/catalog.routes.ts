@@ -1,3 +1,4 @@
+import { publicBuses } from "../tracking/publicBuses";
 import { currentLine } from "../tenancy/context";
 import { locationsService } from "../modules/locations/locations.service";
 import { Router } from "express";
@@ -61,7 +62,7 @@ catalogRouter.get(
       query("SELECT r.id,r.transport_line_id FROM routes r WHERE r.active AND r.visible_in_app AND (r.transport_line_id IS NULL OR EXISTS(SELECT 1 FROM transport_lines tl WHERE tl.id=r.transport_line_id AND tl.active))"),
     ]);
     const counts = new Map<string, number>();
-    for (const bus of live) {
+    for (const bus of await publicBuses(live)) {
       const line = result.rows.find((r) => r.id === bus.routeId)?.transport_line_id;
       if (line) counts.set(line, (counts.get(line) ?? 0) + 1);
     }

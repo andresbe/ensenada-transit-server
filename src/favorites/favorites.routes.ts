@@ -1,3 +1,6 @@
+import { saveJourney } from "../passengers/savedJourneys.service";
+import { visibleRouteSql } from "../passengers/visibility";
+import { uuid, record } from "../passengers/validation";
 import { Request, Response, Router } from "express";
 import { authMiddleware, userAccountMiddleware } from "../auth/auth.middleware";
 import { query } from "../db";
@@ -20,11 +23,11 @@ favoritesRouter.get(
   asyncHandler(async (req: Request, res: Response) => {
     if (!req.user) throw new AppError("Unauthorized.", 401);
     const result = await query(
-      `SELECT r.id, r.name, r.short_name, r.color, r.text_color, r.active, fr.created_at AS favorited_at
-       FROM favorite_routes fr
+      `SELECT DISTINCT ON (r.id) r.id, r.name, r.short_name, r.color, r.text_color, r.active, fr.created_at AS favorited_at
+       FROM saved_journeys fr
        JOIN routes r ON r.id = fr.route_id
-       WHERE fr.user_id = $1
-       ORDER BY fr.created_at DESC`,
+       WHERE fr.user_id = $1 AND ${visibleRouteSql("r")}
+       ORDER BY r.id, fr.created_at DESC`,
       [req.user.sub],
     );
     sendSuccess(res, { routes: result.rows });
@@ -37,14 +40,8 @@ favoritesRouter.post(
   apiRateLimiter,
   asyncHandler(async (req: Request, res: Response) => {
     if (!req.user) throw new AppError("Unauthorized.", 401);
-    const body = req.body as { route_id?: unknown };
-    if (typeof body.route_id !== "string" || body.route_id.trim() === "") {
-      throw new AppError("route_id is required.", 400);
-    }
-    await query(
-      `INSERT INTO favorite_routes (user_id, route_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
-      [req.user.sub, body.route_id],
-    );
+    const routeId=uuid(record(req.body).route_id);
+    await saveJourney(req.user!.sub,{route_id:routeId,client_id:"legacy-route:"+routeId},true);
     sendSuccess(res, { message: "Route added to favorites." }, 201);
   }),
 );
@@ -56,7 +53,7 @@ favoritesRouter.delete(
   asyncHandler(async (req: Request, res: Response) => {
     if (!req.user) throw new AppError("Unauthorized.", 401);
     await query(
-      `DELETE FROM favorite_routes WHERE user_id = $1 AND route_id = $2`,
+      `DELETE FROM saved_journeys WHERE user_id = $1 AND route_id = $2`,
       [req.user.sub, req.params.routeId],
     );
     sendSuccess(res, { message: "Route removed from favorites." });
@@ -75,8 +72,8 @@ favoritesRouter.get(
       `SELECT s.id, s.name, s.latitude, s.longitude, s.sequence, s.route_id, s.variant_id,
               fs.created_at AS favorited_at
        FROM favorite_stops fs
-       JOIN stops s ON s.id = fs.stop_id
-       WHERE fs.user_id = $1
+       JOIN stops s ON s.id = fs.stop_id JOIN routes r ON r.id=s.route_id
+       WHERE fs.user_id = $1 AND ${visibleRouteSql("r")}
        ORDER BY fs.created_at DESC`,
       [req.user.sub],
     );
@@ -94,10 +91,11 @@ favoritesRouter.post(
     if (typeof body.stop_id !== "string" || body.stop_id.trim() === "") {
       throw new AppError("stop_id is required.", 400);
     }
-    await query(
-      `INSERT INTO favorite_stops (user_id, stop_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+    const result = await query(
+      `INSERT INTO favorite_stops (user_id, stop_id) SELECT $1,s.id FROM stops s JOIN routes r ON r.id=s.route_id WHERE s.id=$2 AND ${visibleRouteSql("r")} ON CONFLICT(user_id,stop_id) DO UPDATE SET stop_id=EXCLUDED.stop_id RETURNING stop_id`,
       [req.user.sub, body.stop_id],
     );
+    if (!result.rows.length) throw new AppError("Stop not found.",404);
     sendSuccess(res, { message: "Stop added to favorites." }, 201);
   }),
 );

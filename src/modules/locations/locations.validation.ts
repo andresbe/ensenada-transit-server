@@ -15,7 +15,7 @@ const isPlainObject = (value: unknown): value is Record<string, unknown> => {
 const requireString = (body: Record<string, unknown>, field: string): string => {
   const value = body[field];
 
-  if (typeof value !== "string" || value.trim() === "") {
+  if (typeof value !== "string" || value.trim() === "" || value.length > 320) {
     throw new AppError(`${field} is required and must be a non-empty string.`, 400);
   }
 
@@ -106,7 +106,12 @@ export const validateLocationUpdate = (body: unknown): LocationUpdateRequest => 
     throw new AppError("timestamp must be a positive Unix timestamp in milliseconds.", 400);
   }
 
+  const sessionId = body.sessionId;
+  if (sessionId !== undefined && (typeof sessionId !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(sessionId))) {
+    throw new AppError("Invalid sessionId.", 400);
+  }
   return {
+    sessionId: sessionId as string | undefined,
     sourceId,
     sourceType: sourceType as SourceType,
     busId,

@@ -1,6 +1,3 @@
-const fs=require('fs');for(const p of ['src/passengers/catalog.routes.ts','src/passengers/passengers.routes.ts']){let s=fs.readFileSync(p,'utf8').replaceAll('\r\n','\n');s=s.replace(/(?:catalogRouter|passengerRouter)\.use\(apiRateLimiter\);\n/,'').replace(/((?:catalogRouter|passengerRouter)\.(?:get|post|patch|delete)\("[^"]+",)/g,'$1 apiRateLimiter,');fs.writeFileSync(p,s)}
-'@ | node
-@'
 const {test}=require('node:test');const assert=require('node:assert/strict');
 process.env.JWT_SECRET='passenger-unit-tests';
 const express=require('express'),jwt=require('jsonwebtoken');
@@ -11,11 +8,15 @@ const {catalogRouter}=require('../dist/passengers/catalog.routes');
 const {usersRouter}=require('../dist/users/users.routes');
 const {errorHandler}=require('../dist/shared/errors');
 const owner='10000000-0000-4000-8000-000000000001',route='20000000-0000-4000-8000-000000000002',item='30000000-0000-4000-8000-000000000003';
-const token=jwt.sign({sub:owner,role:'user'},process.env.JWT_SECRET);
+const token=jwt.sign({sub:owner,role:'user',tokenVersion:1},process.env.JWT_SECRET);
 
 test('passenger HTTP contracts enforce ownership, validation and public visibility',async(t)=>{
  const original=db.query;let calls=[];
- db.query=async(sql,params=[])=>{calls.push({sql,params});
+ db.query=async(sql,params=[])=>{
+  if(sql==='SELECT status,role,token_version FROM users WHERE id=$1')return {rows:[{status:'active',role:'user',token_version:1}]};
+  if(sql==='SELECT status FROM users WHERE id=$1')return {rows:[{status:'active'}]};
+  if(sql.startsWith('SELECT is_tester FROM users'))return {rows:[{is_tester:false}]};
+  calls.push({sql,params});
   if(sql.includes('SELECT id FROM route_variants'))return {rows:[]};
   if(sql.includes('FROM users WHERE'))return {rows:[{id:owner}],rowCount:1};
   if(sql.includes('FROM user_preferences'))return {rows:[{user_id:owner,language:'en'}]};
@@ -27,7 +28,7 @@ test('passenger HTTP contracts enforce ownership, validation and public visibili
  t.after(async()=>{db.query=original;await new Promise(resolve=>server.close(resolve));});
  const request=(path,method='GET',body,auth=true)=>fetch(base+path,{method,headers:{'Content-Type':'application/json',...(auth?{Authorization:`Bearer ${token}`}:{})},body:body===undefined?undefined:JSON.stringify(body)});
  await t.test('private reads reject unauthenticated callers before querying',async()=>{calls=[];assert.equal((await request('/saved-journeys','GET',undefined,false)).status,401);assert.equal(calls.length,0);});
- await t.test('saved journeys list is scoped and paginated',async()=>{calls=[];assert.equal((await request('/saved-journeys?limit=20&offset=5')).status,200);assert.match(calls[0].sql,/WHERE user_id=\$1/);assert.deepEqual(calls[0].params,[owner,20,5]);});
+ await t.test('saved journeys list is scoped and paginated',async()=>{calls=[];assert.equal((await request('/saved-journeys?limit=20&offset=5')).status,200);assert.match(calls[0].sql,/WHERE j\.user_id=\$1/);assert.deepEqual(calls[0].params,[owner,20,5]);});
  await t.test('deleting another user favorite always includes owner in SQL',async()=>{calls=[];assert.equal((await request('/saved-journeys/'+item,'DELETE')).status,204);assert.match(calls[0].sql,/user_id=\$2/);assert.deepEqual(calls[0].params,[item,owner]);});
  await t.test('cross-route variant rejects before favorite insert',async()=>{calls=[];assert.equal((await request('/saved-journeys','POST',{route_id:route,variant_id:item,client_id:'retry-1'})).status,400);assert.ok(calls.every(c=>!c.sql.includes('INSERT')));});
  await t.test('support has bounded text and an idempotency key',async()=>{calls=[];assert.equal((await request('/support/tickets','POST',{message:'help',client_id:'request-1'})).status,201);assert.deepEqual(calls[0].params,[owner,'help','request-1']);assert.match(calls[0].sql,/ON CONFLICT/);calls=[];assert.equal((await request('/support/tickets','POST',{message:'',client_id:'request-1'})).status,400);assert.equal(calls.length,0);});

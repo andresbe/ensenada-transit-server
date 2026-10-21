@@ -16,7 +16,7 @@ test('passenger report HTTP contract, ownership, references and retry deduplicat
  const express=require('express'),jwt=require('jsonwebtoken');const app=express();app.use(express.json());app.use('/reports',require('../dist/reports/reports.routes').reportsRouter);app.use(require('../dist/shared/errors').errorHandler);
  const server=app.listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));t.after(()=>new Promise(r=>server.close(r)));
  const base='http://127.0.0.1:'+server.address().port;
- const token=jwt.sign({sub:user.id,role:'user'},process.env.JWT_SECRET);
+ const token=jwt.sign({sub:user.id,role:'user',tokenVersion:1},process.env.JWT_SECRET);
  const post=async body=>{const r=await fetch(base+'/reports',{method:'POST',headers:{authorization:'Bearer '+token,'content-type':'application/json'},body:JSON.stringify(body)});return {status:r.status,data:await r.json()};};
  const body={type:'stopIssue',severity:'high',stop_id:stop.id,message:'Parada bloqueada',client_id:'retry-1'};
  const first=await post(body);assert.equal(first.status,201,JSON.stringify(first.data));assert.equal(first.data.report.stop_id,stop.id);assert.equal(first.data.report.route_id,route.id);assert.equal(first.data.report.severity,'high');

@@ -31,6 +31,11 @@ export const validateLocationUpdateAuth = async (
     if (existing.rows.length || !variant.rows.length) throw new AppError("Invalid simulation vehicle or route.", 403);
     return;
   }
+  if(payload.sourceType==='driver') {
+    if(!req.user)throw new AppError('Authentication token is required for location updates.',401);
+    if(req.user.role!=='driver' || req.user.identityType==='admin')throw new AppError('Only an authenticated driver may send vehicle telemetry.',403);
+    if(!payload.sessionId)throw new AppError('sessionId is required for driver location updates.',400);
+  }
   // Preserve unregistered legacy IDs, but registered driver telemetry must belong
   // to the assigned conductor. Passenger observations retain their own sourceType.
   if (payload.sourceType === "driver") {
@@ -80,6 +85,13 @@ export const validateLocationUpdateAuth = async (
     throw new AppError("Driver or admin account required for driver location updates.", 403);
   }
 
+  if (payload.sessionId) {
+    const active = await query(
+      "SELECT s.id FROM driver_sessions s LEFT JOIN conductores c ON c.id=s.conductor_id WHERE s.id=$1 AND s.status='active' AND s.bus_id=$2 AND s.route_id::text=$3 AND (c.correo=$4 OR s.driver_id::text=$4)",
+      [payload.sessionId, payload.busId, await canonicalRouteId(payload.routeId), req.user.sub],
+    );
+    if (!active.rows.length) throw new AppError("El servicio ya no está activo. Actualiza tu asignación.", 409);
+  }
   const result = await query<LocationAuthUser>(
     `SELECT correo AS id, 'driver' AS role
      FROM conductores

@@ -1,3 +1,4 @@
+import { publicBuses } from "../tracking/publicBuses";
 import { Router } from "express";
 import { query } from "../db";
 import { apiRateLimiter } from "../middleware/rateLimiter";
@@ -16,7 +17,7 @@ journeyPlannerRouter.post("/journeys/plan", apiRateLimiter, asyncHandler(async (
       FROM route_variants v JOIN routes r ON r.id=v.route_id
       WHERE r.active AND r.visible_in_app AND (r.transport_line_id IS NULL OR EXISTS(SELECT 1 FROM transport_lines l WHERE l.id=r.transport_line_id AND l.active))
       `, []),
-    locationsService.getLiveBuses(false).then(buses => ({ buses, available: true })).catch(() => ({ buses: [], available: false })),
+    locationsService.getLiveBuses(false).then(publicBuses).then(buses => ({ buses, available: true })).catch(() => ({ buses: [], available: false })),
   ]);
   res.setHeader("Cache-Control", "no-store");
   sendSuccess(res, { plans: recommendRoutes(input, result.rows, live.buses), liveAvailable: live.available, maxWalkingMeters: input.maxWalkingMeters, generatedAt: new Date().toISOString() });

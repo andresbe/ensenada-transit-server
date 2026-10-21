@@ -4,13 +4,12 @@ const redisUrl = process.env.REDIS_URL ?? "redis://localhost:6379";
 
 const client: RedisClientType = createClient({
   url: redisUrl,
+  // Fail requests promptly during outages instead of retaining an unbounded queue.
+  disableOfflineQueue: true,
   socket: {
     reconnectStrategy: (retries) => {
-      if (retries > 10) {
-        console.error("[redis] Too many reconnect attempts – giving up.");
-        return new Error("Redis reconnect limit reached");
-      }
-      return Math.min(retries * 100, 3_000);
+      // Keep recovering after prolonged outages; cap the delay, not the attempts.
+      return Math.min((retries + 1) * 100, 3_000);
     },
   },
 }) as RedisClientType;

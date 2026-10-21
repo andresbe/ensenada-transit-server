@@ -5,6 +5,7 @@ export type UserRole = "user" | "driver" | "admin";
 export type UserStatus = "active" | "suspended" | "deleted";
 
 export interface User {
+  token_version?: number; // Internal credential version; omit from API user objects.
   is_superadmin?: boolean;
   id: string;
   email: string | null;

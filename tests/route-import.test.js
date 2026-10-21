@@ -96,15 +96,12 @@ test('import HTTP authorization, atomic writes, reloading geometry and ETA', asy
     body: JSON.stringify({ sourceId: 'test', sourceType: 'user', busId: 'test-import-bus', routeId, routeVariantId: variantId,
       routeVariantDirection: 'ida', latitude: 31.802, longitude: -116.6, timestamp: Date.now(), speed: 5 }),
   });
-  assert.equal(location.status, 201);
-  const locationBody = await location.json();
-  assert.ok(locationBody.routeProgressMeters > 200);
+  assert.equal(location.status, 403); // Passengers cannot publish bus GPS.
   const eta = await fetch(base + `/routes/${variantId}/eta?userLat=31.808&userLng=-116.6`);
   assert.equal(eta.status, 200);
   const etaBody = await eta.json();
   assert.ok(etaBody.user.progressMeters > 800);
-  assert.equal(etaBody.buses[0].busId, 'test-import-bus');
-  assert.ok(etaBody.buses[0].etaToUserSeconds > 0);
+  assert.deepEqual(etaBody.buses, []); // No verified service is active.
   assert.ok(routeGeometryService.getRouteGeometry('ruta_violeta_ida'));
 
   statements = []; failVariant = true;

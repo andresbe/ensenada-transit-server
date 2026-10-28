@@ -24,6 +24,19 @@ const completedRemainingMeters = 80;
 
 const locationsByBusId = new Map<string, LiveBusLocation>();
 const busLocationHistory = new Map<string, LiveBusLocation[]>();
+// A bounded grace period preserves includeStale diagnostics without retaining bus IDs forever.
+const memoryRetentionMs = Math.max(maxHistoryAgeMs, env.locationTtlMs * 2);
+let lastMemorySweepAt = 0;
+const pruneExpiredLocations = (now: number) => {
+  if (now >= lastMemorySweepAt && now - lastMemorySweepAt < 1000) return;
+  lastMemorySweepAt = now;
+  for (const [busId, location] of locationsByBusId) {
+    if (now - Math.min(location.timestamp, location.updatedAt) > memoryRetentionMs) {
+      locationsByBusId.delete(busId);
+      busLocationHistory.delete(busId);
+    }
+  }
+};
 
 const isLocationStale = (location: LiveBusLocation, now = Date.now()): boolean => {
   return now - location.updatedAt > env.locationTtlMs || now - location.timestamp > env.locationTtlMs;
@@ -245,24 +258,11 @@ const filterStale = (buses: LiveBus[], includeStale: boolean): LiveBus[] => {
   return includeStale ? buses : buses.filter((bus) => !bus.isStale);
 };
 
-const mergeLocationsByNewestUpdate = (
-  locations: LiveBusLocation[],
-): LiveBusLocation[] => {
-  const merged = new Map<string, LiveBusLocation>();
-
-  for (const location of locations) {
-    const current = merged.get(location.busId);
-
-    if (!current || location.timestamp > current.timestamp) {
-      merged.set(location.busId, location);
-    }
-  }
-
-  return Array.from(merged.values());
-};
-
 const putLocationsInMemory = (locations: LiveBusLocation[]) => {
+  const now = Date.now();
+  pruneExpiredLocations(now);
   for (const location of locations) {
+    if (now - Math.min(location.timestamp,location.updatedAt) > memoryRetentionMs) continue;
     const current = locationsByBusId.get(location.busId);
 
     if (!current || location.timestamp > current.timestamp) {
@@ -279,6 +279,7 @@ export const locationsService = {
   },
   updateLocation(payload: LocationUpdateRequest): LiveBusLocation {
     const updatedAt = Date.now();
+    pruneExpiredLocations(updatedAt);
     const previous = locationsByBusId.get(payload.busId);
     if (previous && previous.timestamp >= payload.timestamp) return previous;
     const history = pruneHistory(busLocationHistory.get(payload.busId) ?? [], updatedAt).filter(point => point.routeVariantId === payload.routeVariantId && point.sessionId === payload.sessionId);
@@ -365,6 +366,16 @@ export const locationsService = {
     return storedLocation;
   },
 
+  discardUnconfirmedLocation(location: LiveBusLocation): void {
+    // A concurrent newer update must never be removed by an older failed request.
+    if (locationsByBusId.get(location.busId) === location) {
+      locationsByBusId.delete(location.busId);
+    }
+    const history = busLocationHistory.get(location.busId)?.filter(point => point !== location);
+    if (history?.length) busLocationHistory.set(location.busId, history);
+    else busLocationHistory.delete(location.busId);
+  },
+
   async hydrateFromRedis(): Promise<number> {
     const redisLocations = await getLiveBusLocations();
     putLocationsInMemory(redisLocations);
@@ -379,9 +390,7 @@ export const locationsService = {
     const redisLocations = await getLiveBusLocations();
     putLocationsInMemory(redisLocations);
 
-    const locations = mergeLocationsByNewestUpdate(
-      Array.from(locationsByBusId.values()).concat(redisLocations),
-    );
+    const locations = Array.from(locationsByBusId.values());
     const buses = locations.map((location) => toLiveBus(location, now));
 
     return filterStale(buses, includeStale);
@@ -395,9 +404,7 @@ export const locationsService = {
     const redisLocations = await getLiveBusLocations();
     putLocationsInMemory(redisLocations);
 
-    const buses = mergeLocationsByNewestUpdate(
-      Array.from(locationsByBusId.values()).concat(redisLocations),
-    )
+    const buses = Array.from(locationsByBusId.values())
       .filter((location) => location.routeVariantId === routeVariantId)
       .map((location) => toLiveBus(location, now));
 

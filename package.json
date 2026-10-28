@@ -30,12 +30,13 @@
     "test:tenancy": "npm run build && node --test tests/line-tenancy.test.js",
     "simulate:local": "node scripts/simulate-buses.js",
     "test:simulation": "npm run build && node --test tests/local-simulation.test.js",
-    "test:tracking": "npm run build && node --test tests/direction-evidence.test.js tests/field-tracking-database.test.js tests/checkpoints.test.js tests/tracking-health.test.js tests/session-lifecycle.test.js",
+    "test:tracking": "npm run build && node --test tests/direction-evidence.test.js tests/field-tracking-database.test.js tests/checkpoints.test.js tests/tracking-health.test.js tests/tracking-delivery.test.js tests/tracking-redis-outage-local.test.js tests/session-lifecycle.test.js",
     "test:hardening": "npm run build && node --test tests/backend-hardening.test.js tests/public-bus-label.test.js tests/admin-rate-limit.test.js tests/tester-rate-limit.test.js tests/session-lifecycle.test.js",
     "test:security-second-pass": "npm run build && node --test --test-concurrency=1 tests/security-second-pass.test.js tests/google-auth.test.js tests/profile.test.js tests/notification-preferences.test.js tests/passenger-database.test.js tests/admin-auth.test.js tests/database-security.test.js",
     "test:security-third-pass": "npm run build && node --test --test-concurrency=1 tests/security-third-pass.test.js tests/security-second-pass.test.js tests/passenger-database.test.js tests/line-tenancy.test.js tests/route-crud.test.js tests/field-tracking-database.test.js tests/tracking-health.test.js tests/backend-hardening.test.js tests/public-bus-label.test.js",
     "test:security-fourth-pass": "npm run build && node --test tests/security-fourth-pass.test.js tests/redis-recovery.test.js",
-    "test:security-fifth-pass": "npm run build && node --test tests/security-fifth-pass.test.js tests/journey-planner.test.js tests/public-bus-label.test.js"
+    "test:security-fifth-pass": "npm run build && node --test tests/security-fifth-pass.test.js tests/journey-planner.test.js tests/public-bus-label.test.js",
+    "test:audit-remediation": "npm run build && node --test --test-concurrency=1 tests/audit-remediation.test.js tests/session-lifecycle.test.js tests/field-tracking-database.test.js"
   },
   "keywords": [
     "ensenada",

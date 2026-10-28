@@ -28,12 +28,19 @@ const md = new MarkdownIt();
 
 // ── Template loader ───────────────────────────────────────────
 
-const loadTemplate = (templatePath: string, replacements: Record<string, string>): string => {
+export const renderEmailTemplate = (raw: string, replacements: Record<string, string>) => {
+  // Render trusted template structure first; replacement text never enters the parser.
+  const replace = (content: string, html: boolean) => content.replace(/\{\{(\w+)\}\}/g, (placeholder, key: string) => {
+    const value = replacements[key];
+    if (value === undefined) return placeholder;
+    return html ? md.utils.escapeHtml(value) : value;
+  });
+  return { text: replace(raw, false), html: replace(md.render(raw), true) };
+};
+
+const loadTemplate = (templatePath: string, replacements: Record<string, string>) => {
   const raw = fs.readFileSync(templatePath, "utf8");
-  return Object.entries(replacements).reduce(
-    (content, [key, value]) => content.split(`{{${key}}}`).join(value),
-    raw,
-  );
+  return renderEmailTemplate(raw, replacements);
 };
 
 // ── sendWelcomeEmail ──────────────────────────────────────────
@@ -49,18 +56,16 @@ export const sendWelcomeEmail = async (
 
   const templatePath = path.resolve(process.cwd(), "email/welcome-email.md");
 
-  const markdownContent = loadTemplate(templatePath, {
+  const content = loadTemplate(templatePath, {
     display_name: displayName || email,
   });
-
-  const htmlContent = md.render(markdownContent);
 
   await transporter.sendMail({
     from: `"${emailConfig.fromName}" <${emailConfig.fromEmail}>`,
     to: email,
     subject: "¡Bienvenido a Ensenada Transit!",
-    text: markdownContent,
-    html: htmlContent,
+    text: content.text,
+    html: content.html,
   });
 
   return true;

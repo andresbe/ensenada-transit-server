@@ -87,6 +87,15 @@ test('line tenancy: real RLS, HTTP isolation, revocation, drafts, and compatible
   assert.equal(y.status,201,JSON.stringify(y.body));assert.equal(y.body.vehicle.transport_line_id,yellow.id);
   const r=await call(redAdmin,'/admin/lines/'+red.id+'/vehicles','POST',{economic_number:'042',operational_status:'available'});
   assert.equal(r.status,201,JSON.stringify(r.body));
+  await t.test('audit identifies the changed record and actor without crossing lines',async()=>{
+    const yellowAudit=await call(yellowAdmin,prefix+'/audit');
+    assert.equal(yellowAudit.status,200,JSON.stringify(yellowAudit.body));
+    const created=yellowAudit.body.records.find(entry=>entry.entity_id===y.body.vehicle.id && entry.entity_type==='fleet_vehicles');
+    assert.equal(created?.entity_name,'Camión 042');
+    assert.equal(created?.actor_name,yellowAdmin.email);
+    assert.ok(created?.id);
+    assert.equal(yellowAudit.body.records.some(entry=>entry.entity_id===r.body.vehicle.id),false);
+  });
   await t.test('live map returns economic numbers and line colors without leaking other lines',async()=>{
     const service=require('../dist/modules/locations/locations.service').locationsService;
     const previous=service.getLiveBuses;
@@ -124,6 +133,7 @@ test('line tenancy: real RLS, HTTP isolation, revocation, drafts, and compatible
   const routePayload={name:'Ruta privada',short_name:'RP',color:'#112233',visible_in_app:false,variants:[{name:'Ida',direction:'ida',geojson:{type:'LineString',coordinates:[[-116.6,31.8],[-116.5,31.9]]},stops:[]}]};
   const imported=await call(yellowAdmin,prefix+'/db-routes/import','POST',routePayload);assert.equal(imported.status,201,JSON.stringify(imported.body));
   const routeId=imported.body.route.id;
+  const variantId=(await execute('SELECT id FROM route_variants WHERE route_id=$1',[routeId])).rows[0].id;
   await t.test('checkpoint saves preserve permissions and database-owned audit', async () => {
     const variant=(await execute('SELECT id FROM route_variants WHERE route_id=$1',[routeId])).rows[0];
     const stop=(await execute("INSERT INTO stops(route_id,variant_id,name,latitude,longitude,sequence) VALUES($1,$2,'Control',31.8,-116.6,0) RETURNING id",[routeId,variant.id])).rows[0];
@@ -172,6 +182,7 @@ test('line tenancy: real RLS, HTTP isolation, revocation, drafts, and compatible
   assert.equal((await call(redAdmin,'/admin/lines/'+red.id+'/db-routes/'+routeId)).status,404);
   assert.equal((await fetch(base+'/db-routes/'+routeId)).status,404);
   const edit=await call(yellowAdmin,prefix+'/vehicles/'+y.body.vehicle.id,'PUT',{...y.body.vehicle,assigned_route_id:routeId});assert.equal(edit.status,200,JSON.stringify(edit.body));
+  assert.equal((await call(yellowAdmin,prefix+'/vehicles')).body.vehicles[0].route_name,'Ruta privada');
   const options=await call(yellowAdmin,prefix+'/vehicles/options');assert.equal(options.status,200,JSON.stringify(options.body));assert.equal(options.body.lines.length,1);
   const driverCreated=await call(yellowAdmin,prefix+'/drivers','POST',{name:'Conductor Amarilla',email:'driver-yellow@test.local',password:'test-password-123'});
   assert.equal(driverCreated.status,201,JSON.stringify(driverCreated.body));
@@ -182,9 +193,9 @@ test('line tenancy: real RLS, HTTP isolation, revocation, drafts, and compatible
   assert.equal(driverEdit.status,200,JSON.stringify(driverEdit.body));
   const {startSession}=require('../dist/driver-sessions/driverSessions.service');
   const {validateLocationUpdateAuth}=require('../dist/tracking/locationAuth');
-  const session=await startSession(driver.correo,{bus_id:y.body.vehicle.tracking_id,route_id:routeId});
+  const session=await startSession(driver.correo,{bus_id:y.body.vehicle.tracking_id,route_id:routeId,variant_id:variantId});
   assert.equal(session.transport_line_id,yellow.id);
-  await assert.rejects(startSession(driver.correo,{bus_id:'unknown-bus',route_id:routeId}),{statusCode:403});
+  await assert.rejects(startSession(driver.correo,{bus_id:'unknown-bus',route_id:routeId,variant_id:variantId}),{statusCode:403});
   await validateLocationUpdateAuth({header:()=>undefined,user:{sub:driver.correo,role:'driver'}},{sessionId:session.id,sourceType:'driver',sourceId:driver.correo,busId:y.body.vehicle.tracking_id,routeId});
   await assert.rejects(validateLocationUpdateAuth({header:()=>undefined,user:{sub:driver.correo,role:'driver'}},{sessionId:session.id,sourceType:'driver',sourceId:driver.correo,busId:r.body.vehicle.tracking_id,routeId}),{statusCode:403});
   const {refreshToken,generateDriverToken}=require('../dist/auth/auth.service');
@@ -283,7 +294,7 @@ test('line tenancy: real RLS, HTTP isolation, revocation, drafts, and compatible
     assert.equal((await call(root,driverUrl,'PUT',update())).status,409);
     assert.equal((await call(root,prefix+'/drivers?status=suspended')).body.total,1);
     assert.equal((await call(root,prefix+'/vehicles/options')).body.drivers.length,0);
-    await assert.rejects(startSession(driver.correo,{bus_id:y.body.vehicle.tracking_id,route_id:routeId}),{statusCode:403});
+    await assert.rejects(startSession(driver.correo,{bus_id:y.body.vehicle.tracking_id,route_id:routeId,variant_id:variantId}),{statusCode:403});
     profile=(await call(root,prefix+'/drivers')).body.drivers[0];
     assert.equal((await call(root,driverUrl,'PUT',{...update(),active:true,password:'replacement-password-456'})).status,200);
     await assert.rejects(refreshToken(generateDriverToken(driver.correo)),{statusCode:401});
@@ -292,7 +303,7 @@ test('line tenancy: real RLS, HTTP isolation, revocation, drafts, and compatible
     assert.equal(await require('bcrypt').compare('replacement-password-456',stored.password),true);
     assert.equal(require('bcrypt').getRounds(stored.password),12);
     const freshHeaders={authorization:'Bearer '+generateDriverToken(driver.correo,stored.token_version),'content-type':'application/json'};
-    const started=await fetch(base+'/driver-sessions/start',{method:'POST',headers:freshHeaders,body:JSON.stringify({bus_id:y.body.vehicle.tracking_id,route_id:routeId})});
+    const started=await fetch(base+'/driver-sessions/start',{method:'POST',headers:freshHeaders,body:JSON.stringify({bus_id:y.body.vehicle.tracking_id,route_id:routeId,variant_id:variantId})});
     assert.equal(started.status,201);const active=(await started.json()).session;
     assert.equal((await call(root,prefix+'/trips?status=active')).body.records[0].id,active.id);
     assert.equal((await fetch(base+'/driver-sessions/'+active.id+'/end',{method:'POST',headers:freshHeaders})).status,200);

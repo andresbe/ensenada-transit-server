@@ -1,5 +1,5 @@
 import { saveJourney } from "./savedJourneys.service";
-import { visibleRouteSql } from "./visibility";
+import { visibleRouteSql, validAlertTargetSql } from "./visibility";
 import { Router } from "express";
 import { query, getClient } from "../db";
 import { authMiddleware, userAccountMiddleware, adminMiddleware } from "../auth/auth.middleware";
@@ -40,6 +40,7 @@ passengerRouter.get(
     CASE WHEN $1='en' THEN COALESCE(title_en,title_es) ELSE title_es END AS title,
     CASE WHEN $1='en' THEN COALESCE(description_en,description_es) ELSE description_es END AS description,
     created_at,expires_at FROM alerts WHERE (transport_line_id IS NULL OR EXISTS(SELECT 1 FROM transport_lines l WHERE l.id=alerts.transport_line_id AND l.active)) AND (route_id IS NULL OR EXISTS(SELECT 1 FROM routes visible_route WHERE visible_route.id=alerts.route_id AND ${visibleRouteSql("visible_route")})) AND (stop_id IS NULL OR EXISTS(SELECT 1 FROM stops visible_stop JOIN routes visible_route ON visible_route.id=visible_stop.route_id WHERE visible_stop.id=alerts.stop_id AND ${visibleRouteSql("visible_route")})) AND published AND starts_at<=NOW() AND expires_at>NOW()
+    AND ${validAlertTargetSql("alerts")}
     AND ($2::uuid IS NULL OR route_id=$2) AND ($3::uuid IS NULL OR stop_id=$3)
     AND ($4::text IS NULL OR category=$4) ORDER BY created_at DESC,id LIMIT $5 OFFSET $6`,
       [language, routeId, stopId, category, limit, offset],
@@ -60,16 +61,26 @@ passengerRouter.post(
       throw new AppError("Expiration must be in the future.", 400);
     if (b.published !== undefined && typeof b.published !== "boolean")
       throw new AppError("published must be boolean.", 400);
-    if (currentLine() && b.route_id != null) {
-      const route = await query("SELECT id FROM routes WHERE id=$1 AND active AND visible_in_app", [uuid(b.route_id)]);
-      if (!route.rows.length) throw new AppError("Selecciona una ruta publicada de esta línea.", 400);
+    let routeId = b.route_id == null ? null : uuid(b.route_id);
+    const stopId = b.stop_id == null ? null : uuid(b.stop_id);
+    if (stopId) {
+      // Scoped queries use RLS: a foreign stop must not be selectable, even without route_id.
+      const stop = (await query("SELECT route_id FROM stops WHERE id=$1", [stopId])).rows[0];
+      if (!stop?.route_id || (routeId && routeId !== stop.route_id)) throw new AppError("Selecciona una parada de la ruta y línea indicadas.",400);
+      routeId = stop.route_id;
+    }
+    let lineId = currentLine()?.lineId ?? null;
+    if (routeId) {
+      const route = (await query("SELECT id,transport_line_id FROM routes WHERE id=$1 AND active AND visible_in_app", [routeId])).rows[0];
+      if (!route || (lineId && lineId !== route.transport_line_id)) throw new AppError("Selecciona una ruta publicada de esta línea.",400);
+      lineId = route.transport_line_id;
     }
     const result = await query(
-      `INSERT INTO alerts(route_id,stop_id,category,severity,title_es,description_es,title_en,description_en,published,expires_at,published_at)
-    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,CASE WHEN $9 THEN NOW() ELSE NULL END) RETURNING *`,
+      `INSERT INTO alerts(route_id,stop_id,category,severity,title_es,description_es,title_en,description_en,published,expires_at,published_at,transport_line_id)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,CASE WHEN $9 THEN NOW() ELSE NULL END,$11) RETURNING *`,
       [
-        b.route_id == null ? null : uuid(b.route_id),
-        b.stop_id == null ? null : uuid(b.stop_id),
+        routeId,
+        stopId,
         choice(b.category, ["routes", "stops", "service", "news"], "category"),
         choice(b.severity, ["info", "warning", "critical"], "severity"),
         text(b.title_es, "title_es"),
@@ -78,6 +89,7 @@ passengerRouter.post(
         b.description_en == null ? null : text(b.description_en, "description_en", 4000),
         b.published ?? false,
         expires.toISOString(),
+        lineId,
       ],
     );
     res.status(201).json({ alert: result.rows[0] });

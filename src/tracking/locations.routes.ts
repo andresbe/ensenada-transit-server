@@ -96,11 +96,15 @@ trackingRouter.post(
       const diagnosticContext = recordLocationUpdateReceived(req, payload);
       const location = locationsService.updateLocation(payload);
 
-      // Persist to Redis for cross-process sharing in the background.
-      // The driver update response must not wait on Redis availability.
-      void setLiveBusLocation(payload.busId, location).catch((err) =>
-        console.error("[tracking] Redis setLiveBusLocation error:", err),
-      );
+      // Acknowledging before Redis commits loses positions across server processes.
+      // The driver retries with a fresh GPS fix if delivery fails.
+      try {
+        await setLiveBusLocation(payload.busId, location);
+      } catch (error) {
+        locationsService.discardUnconfirmedLocation(location);
+        console.error("[tracking] Redis setLiveBusLocation error:", error);
+        throw new AppError("No se pudo compartir la ubicación. Reintentando en breve.", 503);
+      }
 
       recordLocationUpdateSuccess(
         payload,

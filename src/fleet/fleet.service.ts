@@ -4,9 +4,10 @@ import { getClient, query } from "../db";
 import { AppError } from "../shared/errors";
 import { record, text, uuid, choice } from "../passengers/validation";
 
-export const vehicleColumns = `v.*, l.name AS line_name, c.nombre_usuario AS driver_name, c.correo AS driver_email`;
+export const vehicleColumns = `v.*, l.name AS line_name, c.nombre_usuario AS driver_name, c.correo AS driver_email, r.name AS route_name`;
 export const vehicleJoins = `FROM fleet_vehicles v LEFT JOIN transport_lines l ON l.id=v.transport_line_id
-  LEFT JOIN conductores c ON c.id=v.assigned_driver_id`;
+  LEFT JOIN conductores c ON c.id=v.assigned_driver_id
+  LEFT JOIN routes r ON r.id=v.assigned_route_id`;
 
 export async function getVehicle(id: string) {
   const result = await query(`SELECT ${vehicleColumns} ${vehicleJoins} WHERE v.id=$1`, [uuid(id)]);

@@ -24,6 +24,16 @@ test('real local Redis preserves newest concurrent sample and duplicate expiry',
   assert.ok(await redis.pTTL(key)<=ttl,'duplicate or old samples must not renew expiry');
   assert.equal((await cache.getLiveBusLocation(bus)).latitude,31);
   assert.ok(await redis.sIsMember(cache.liveBusesIndexKey(),bus));
+  await redis.sRem(cache.liveBusesIndexKey(),bus);
+  await cache.setLiveBusLocation(bus,{busId:bus,timestamp:stamp+29,latitude:31,longitude:-116},60);
+  assert.ok(await redis.sIsMember(cache.liveBusesIndexKey(),bus),'duplicate restores a missing live index');
+  const firstSession={busId:bus,sessionId:randomUUID(),timestamp:stamp+1000,updatedAt:stamp+1000};
+  const nextSession={...firstSession,sessionId:randomUUID(),timestamp:stamp+500,updatedAt:stamp+2000};
+  await cache.setLiveBusLocation(bus,firstSession,60);
+  await cache.setLiveBusLocation(bus,nextSession,60);
+  assert.equal((await cache.getLiveBusLocation(bus)).sessionId,nextSession.sessionId,'new session replaces future-dated previous GPS');
+  await cache.setLiveBusLocation(bus,{...firstSession,timestamp:stamp+3000},60);
+  assert.equal((await cache.getLiveBusLocation(bus)).sessionId,nextSession.sessionId,'delayed previous session cannot overwrite a new service');
   await cache.setBusLocation(bus,{sessionId:'old'},60);
   await cache.removeEndedSessionLocation(bus,'old');
   assert.equal(await cache.getLiveBusLocation(bus),null);

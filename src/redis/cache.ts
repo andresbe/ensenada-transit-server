@@ -86,23 +86,29 @@ export const setLiveBusLocation = async (
   location: LiveBusLocation,
   ttlSeconds = env.locationTtlMs / 1000,
 ): Promise<void> => {
-  try {
     // Compare and write atomically across all server processes. Duplicate samples do not renew TTL.
+    // Propagate failures: the driver must only acknowledge a position visible to other processes.
     await redisClient.eval(`
       local old = redis.call('GET', KEYS[1])
       if old then
         local ok, previous = pcall(cjson.decode, old)
-        if ok and tonumber(previous.timestamp) >= tonumber(ARGV[2]) then return 0 end
+        if ok then
+          if tostring(previous.sessionId or '') == ARGV[5] then
+            if tonumber(previous.timestamp) >= tonumber(ARGV[2]) then
+              redis.call('SADD', KEYS[2], ARGV[4])
+              return 0
+            end
+          elseif tonumber(previous.updatedAt or 0) >= tonumber(ARGV[6]) then
+            return 0
+          end
+        end
       end
       redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[3])
       redis.call('SADD', KEYS[2], ARGV[4])
       return 1
     `, {keys: [busLocationKey(busId), liveBusesIndexKey()],
-      arguments: [JSON.stringify(location), String(location.timestamp), String(Math.ceil(ttlSeconds)), busId]});
-    console.log("[cache] Live bus location written to Redis", { busId, ttlSeconds });
-  } catch (err) {
-    console.error("[cache] Redis setLiveBusLocation error:", err);
-  }
+      arguments: [JSON.stringify(location), String(location.timestamp), String(Math.ceil(ttlSeconds)), busId,
+        location.sessionId ?? "", String(location.updatedAt ?? Date.now())]});
 };
 
 export const getLiveBusLocation = <T = LiveBusLocation>(busId: string) =>

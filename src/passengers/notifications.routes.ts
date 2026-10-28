@@ -5,6 +5,7 @@ import { asyncHandler } from "../middleware/errorHandler";
 import { apiRateLimiter } from "../middleware/rateLimiter";
 import { AppError } from "../shared/errors";
 import { record,text,uuid,choice } from "./validation";
+import { registerDevice } from "./devices.service";
 
 export const notificationsRouter=Router();
 const account=[apiRateLimiter,authMiddleware,userAccountMiddleware];
@@ -14,9 +15,7 @@ notificationsRouter.get('/devices',...account,asyncHandler(async(req,res)=>{
 notificationsRouter.post('/devices',...account,asyncHandler(async(req,res)=>{
   const b=record(req.body), token=text(b.token,'token',300), platform=choice(b.platform,['android','ios'],'platform');
   if(!/^(Expo|Exponent)PushToken\[[A-Za-z0-9_-]+\]$/.test(token))throw new AppError('Invalid Expo push token.',400);
-  const result=await query(`INSERT INTO passenger_devices(user_id,token,platform) VALUES($1,$2,$3)
-    ON CONFLICT(token) DO UPDATE SET user_id=EXCLUDED.user_id,platform=EXCLUDED.platform,active=TRUE,updated_at=NOW() RETURNING id`,[req.user!.sub,token,platform]);
-  res.status(201).json({device:result.rows[0]});
+  res.status(201).json({device:await registerDevice(req.user!.sub,token,platform)});
 }));
 notificationsRouter.delete('/devices/:id',...account,asyncHandler(async(req,res)=>{
   await query('DELETE FROM passenger_devices WHERE id=$1 AND user_id=$2',[uuid(req.params.id),req.user!.sub]);res.status(204).end();

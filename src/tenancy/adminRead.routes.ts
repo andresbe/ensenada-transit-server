@@ -32,5 +32,26 @@ adminReadRouter.get("/reports",asyncHandler(async(_req,res)=>{
   res.json({records:(await query("SELECT ur.id,ur.type,ur.route_id,r.name AS route_name,ur.bus_id,ur.message,ur.severity,ur.status,ur.created_at,s.name AS stop_name FROM user_reports ur LEFT JOIN routes r ON r.id=ur.route_id LEFT JOIN stops s ON s.id=ur.stop_id ORDER BY ur.created_at DESC LIMIT 100")).rows});
 }));
 adminReadRouter.get("/audit",asyncHandler(async(_req,res)=>{
-  res.json({records:(await query("SELECT action,entity_type,entity_id,created_at FROM line_audit_log ORDER BY created_at DESC LIMIT 100")).rows});
+  res.json({records:(await query(`WITH recent AS (
+    SELECT id,actor_id,action,entity_type,entity_id,created_at
+    FROM line_audit_log ORDER BY created_at DESC,id DESC LIMIT 100
+  )
+  SELECT a.id,a.action,a.entity_type,a.entity_id,a.created_at,
+    COALESCE(NULLIF(BTRIM(actor.display_name),''),actor.email,'Sistema') AS actor_name,
+    COALESCE(tl.name,driver.nombre_usuario,route.name,variant.name,stop.name,
+      checkpoint_stop.name,alert.title_es,'Camión ' || vehicle.economic_number,
+      NULLIF(BTRIM(target.display_name),''),target.email) AS entity_name
+  FROM recent a
+  LEFT JOIN admins actor ON actor.id=a.actor_id
+  LEFT JOIN transport_lines tl ON a.entity_type='line' AND tl.id::text=a.entity_id
+  LEFT JOIN conductores driver ON a.entity_type='driver' AND driver.id::text=a.entity_id
+  LEFT JOIN routes route ON a.entity_type IN ('route','routes') AND route.id::text=a.entity_id
+  LEFT JOIN route_variants variant ON a.entity_type='route_variants' AND variant.id::text=a.entity_id
+  LEFT JOIN stops stop ON a.entity_type='stops' AND stop.id::text=a.entity_id
+  LEFT JOIN route_checkpoints checkpoint ON a.entity_type='route_checkpoints' AND checkpoint.id::text=a.entity_id
+  LEFT JOIN stops checkpoint_stop ON checkpoint_stop.id=checkpoint.stop_id
+  LEFT JOIN alerts alert ON a.entity_type='alerts' AND alert.id::text=a.entity_id
+  LEFT JOIN fleet_vehicles vehicle ON a.entity_type IN ('vehicle','vehicles','fleet_vehicles') AND vehicle.id::text=a.entity_id
+  LEFT JOIN admins target ON a.entity_type='admin' AND target.id::text=a.entity_id
+  ORDER BY a.created_at DESC,a.id DESC`)).rows});
 }));

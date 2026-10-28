@@ -35,6 +35,7 @@ export async function startSession(subject: string, input: unknown) {
         return existing.rows[0];
       }
     }
+    if (routeId && !variantId) throw new AppError("Selecciona el recorrido de ida o vuelta antes de iniciar.",400);
     if (identity.conductorId) await client.query("SELECT id FROM conductores WHERE id=$1 FOR NO KEY UPDATE", [identity.conductorId]);
     await client.query("SELECT pg_advisory_xact_lock(hashtext($1))",["fleet-bus:"+busId]);
     const found = await client.query("SELECT * FROM fleet_vehicles WHERE tracking_id=$1 FOR UPDATE",[busId]);

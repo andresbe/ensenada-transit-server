@@ -11,7 +11,7 @@ const geometry = (coordinates:[number,number][]) => coordinates.map(([longitude,
 
 export async function beginCheckpointRun(db:Database,sessionId:string,routeId:string,variantId:string,startedAt:Date|string) {
   const variant=(await db.query("SELECT v.direction,v.coordinates,r.checkpoint_revision FROM route_variants v JOIN routes r ON r.id=v.route_id WHERE v.id=$1 AND v.route_id=$2",[variantId,routeId])).rows[0];
-  if(!variant) return;
+  if(!variant) throw new AppError("El recorrido no pertenece a la ruta del servicio.",400);
   const run=(await db.query("INSERT INTO driver_checkpoint_runs(session_id,variant_id,direction,started_at,plan_revision) VALUES($1,$2,$3,$4,$5) RETURNING id",[sessionId,variantId,variant.direction,startedAt,variant.checkpoint_revision])).rows[0];
   const points=(await db.query("SELECT c.*,COALESCE(c.name,s.name) AS name,s.latitude::float8,s.longitude::float8,s.sequence FROM route_checkpoints c JOIN stops s ON s.id=c.stop_id WHERE c.variant_id=$1 ORDER BY s.sequence,s.id",[variantId])).rows;
   const path=geometry(variant.coordinates);
@@ -49,7 +49,10 @@ export async function registerGpsCheckin(subject:string,payload:LocationUpdateRe
     await db.query("SELECT id FROM routes WHERE id=$1 FOR SHARE",[session.route_id]);
     let run=(await db.query("SELECT * FROM driver_checkpoint_runs WHERE session_id=$1 AND ended_at IS NULL",[session.id])).rows[0];
     if(!run) {
-      await beginCheckpointRun(db,session.id,session.route_id,session.variant_id,session.started_at);
+      // Repair legacy sessions on their first validated sample, preserving the service clock.
+      const variantId=session.variant_id ?? payload.routeVariantId;
+      await beginCheckpointRun(db,session.id,session.route_id,variantId,session.started_at);
+      if(!session.variant_id) await db.query("UPDATE driver_sessions SET variant_id=$2 WHERE id=$1",[session.id,variantId]);
       run=(await db.query("SELECT * FROM driver_checkpoint_runs WHERE session_id=$1 AND ended_at IS NULL",[session.id])).rows[0];
     }
     if(run && precise) {

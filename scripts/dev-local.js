@@ -81,7 +81,9 @@ function localDockerEndpoint(endpoint) {
 }
 
 async function waitForApi(port, alive) {
-  for (let i = 0; i < 60; i++) {
+  // A cold ts-node-dev start on a synced Windows checkout can exceed 30 seconds.
+  const deadline = Date.now() + 120_000;
+  while (Date.now() < deadline) {
     if (!alive()) throw new Error("El backend se detuvo durante el arranque.");
     try {
       const response = await fetch(`http://127.0.0.1:${port}/catalog`, { signal: AbortSignal.timeout(1000) });

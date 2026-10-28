@@ -96,6 +96,16 @@ volumen de PostgreSQL: contiene las credenciales de ese volumen.
 y aislamiento de variables. La app tiene `tests/local-launcher.test.cjs`.
 El arranque completo requiere Docker Desktop funcionando; `--check` indica faltantes.
 
+Para comprobar la recuperación del tracking ante una caída real de Redis, con Docker Desktop activo ejecuta desde el backend:
+
+```powershell
+$env:RUN_LOCAL_LIFECYCLE='1'
+node --test tests/tracking-redis-outage-local.test.js
+Remove-Item Env:RUN_LOCAL_LIFECYCLE
+```
+
+La prueba crea y elimina su propio contenedor Redis; no toca el Redis del launcher ni Railway.
+
 ## Simulador de camiones
 
 Para probar rutas existentes sin desplazarte con la app de conductor, consulta

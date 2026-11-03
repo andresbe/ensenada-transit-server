@@ -1,5 +1,7 @@
 -- Teltonika FTC927 support, part 1: devices, vehicle assignment history, test-vehicle flag.
 -- Additive only: no existing table is dropped or rewritten.
+-- Runs inside the runner's transaction: fail fast instead of queueing behind live traffic.
+SET LOCAL lock_timeout = '5s';
 
 -- Existing vehicle entity is fleet_vehicles (012). Default FALSE keeps every current vehicle public.
 ALTER TABLE fleet_vehicles ADD COLUMN IF NOT EXISTS is_test_vehicle BOOLEAN NOT NULL DEFAULT FALSE;

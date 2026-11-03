@@ -93,6 +93,9 @@ export const setLiveBusLocation = async (
       if old then
         local ok, previous = pcall(cjson.decode, old)
         if ok then
+          if previous.provider == 'TELTONIKA' or ARGV[7] == 'TELTONIKA' then
+            if tonumber(previous.timestamp) >= tonumber(ARGV[2]) then return 0 end
+          end
           if tostring(previous.sessionId or '') == ARGV[5] then
             if tonumber(previous.timestamp) >= tonumber(ARGV[2]) then
               redis.call('SADD', KEYS[2], ARGV[4])
@@ -108,7 +111,7 @@ export const setLiveBusLocation = async (
       return 1
     `, {keys: [busLocationKey(busId), liveBusesIndexKey()],
       arguments: [JSON.stringify(location), String(location.timestamp), String(Math.ceil(ttlSeconds)), busId,
-        location.sessionId ?? "", String(location.updatedAt ?? Date.now())]});
+        location.sessionId ?? "", String(location.updatedAt ?? Date.now()), location.provider ?? "ANDROID"]});
 };
 
 export const getLiveBusLocation = <T = LiveBusLocation>(busId: string) =>

@@ -1879,3 +1879,16 @@ Before rollout, verify on a signed Android build: detection of a higher version,
 La activación y migración de administradores, rutas, conductores y flota se describen
 en [docs/line-tenancy.md](docs/line-tenancy.md). Requiere la migración 013 y designar
 explícitamente al superadministrador; las cuentas existentes no se elevan automáticamente.
+
+## Teltonika FTC927
+
+El receptor TCP se ejecuta como servicio separado con `npm run start:teltonika` y comparte
+PostgreSQL, Redis y el procesamiento de ubicaciones con Android.
+Las migraciones aplicadas `029_tracking_devices.sql` y `030_vehicle_gps_locations.sql`
+se reutilizan sin cambios. `031_teltonika_ingestion.sql` agrega la cola persistente
+y los campos operativos sobre ese esquema. No se aplican migraciones al arrancar el receptor;
+su ejecucion sigue siendo responsabilidad de `ensenada-transit-server`.
+
+Consulta [la guia de integracion y despliegue](docs/TELTONIKA.md) para registrar el IMEI,
+crear `TEST-FTC927-001` privado, configurar TCT/Railway y ejecutar el simulador/pruebas.
+No desplegar ni ejecutar migraciones en produccion sin aprobacion explicita.

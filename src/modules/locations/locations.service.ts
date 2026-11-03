@@ -200,6 +200,7 @@ const logProgressDiagnostic = (
   location: LiveBusLocation,
   reason?: string,
 ) => {
+  if (location.provider === "TELTONIKA") return;
   console.log(
     JSON.stringify({
       event,
@@ -223,6 +224,9 @@ const logProgressDiagnostic = (
 
 const toLiveBus = (location: LiveBusLocation, now = Date.now()): LiveBus => {
   return {
+    provider: location.provider,
+    deviceId: location.deviceId,
+    deviceRevision: location.deviceRevision,
     sessionId: location.sessionId,
     busId: location.busId,
     sourceId: location.sourceId,

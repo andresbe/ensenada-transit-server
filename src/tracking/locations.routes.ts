@@ -8,7 +8,7 @@ import { canonicalTrackingIds, canonicalRouteId, canonicalVariantId } from "../p
 import { Request, Response, Router } from "express";
 import { authMiddleware, optionalAuthMiddleware, userAccountMiddleware } from "../auth/auth.middleware";
 import { recordBoarding, endBoarding } from "../boardings/service";
-import { setLiveBusLocation } from "../redis/cache";
+import { ingestLocation } from "./ingestion";
 import { asyncHandler } from "../middleware/errorHandler";
 import { apiRateLimiter } from "../middleware/rateLimiter";
 import { AppError } from "../shared/errors";
@@ -94,17 +94,7 @@ trackingRouter.post(
         if(activeVariant){payload={...payload,...activeVariant};await routeGeometryService.ensureRouteGeometry(payload.routeVariantId);}
       }
       const diagnosticContext = recordLocationUpdateReceived(req, payload);
-      const location = locationsService.updateLocation(payload);
-
-      // Acknowledging before Redis commits loses positions across server processes.
-      // The driver retries with a fresh GPS fix if delivery fails.
-      try {
-        await setLiveBusLocation(payload.busId, location);
-      } catch (error) {
-        locationsService.discardUnconfirmedLocation(location);
-        console.error("[tracking] Redis setLiveBusLocation error:", error);
-        throw new AppError("No se pudo compartir la ubicación. Reintentando en breve.", 503);
-      }
+      const location = await ingestLocation(payload);
 
       recordLocationUpdateSuccess(
         payload,

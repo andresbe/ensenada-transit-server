@@ -32,6 +32,9 @@ export async function recordBoarding(userId:string,p:LocationUpdateRequest,board
     const raw=await redis.get(busLocationKey(p.busId));
     const bus:LiveBusLocation|null=raw?JSON.parse(raw):null;
     validateBoardingEvidence(p,bus);
+    // TODO (P2): reject is_test_vehicle for normal passenger boarding creation/renewal.
+    // Deferred for the private FTC927 pilot: an active Android session can still admit
+    // real boardings on a test vehicle. Keep the pilot GPS-only; see docs/TELTONIKA.md.
     const vehicle=(await db.query(
       `SELECT v.id,s.id AS session_id,c.correo,s.started_at FROM fleet_vehicles v
        JOIN driver_sessions s ON s.vehicle_id=v.id AND s.conductor_id=v.assigned_driver_id AND s.status='active' AND s.route_id=$2

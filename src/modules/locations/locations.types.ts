@@ -3,6 +3,9 @@ export type SourceType = "driver" | "user";
 export type RouteVariantDirection = "ida" | "vuelta";
 
 export interface LocationUpdateRequest {
+  provider?: "ANDROID" | "TELTONIKA";
+  deviceId?: string;
+  deviceRevision?: number;
   sessionId?: string;
   sourceId: string;
   sourceType: SourceType;
@@ -45,6 +48,9 @@ export interface LiveBusLocation extends LocationUpdateRequest {
 }
 
 export interface LiveBus {
+  provider?: "ANDROID" | "TELTONIKA";
+  deviceId?: string;
+  deviceRevision?: number;
   sessionId?: string;
   busId: string;
   sourceId: string;

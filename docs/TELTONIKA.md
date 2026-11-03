@@ -8,6 +8,10 @@ deployment or production migration; those actions still require release authoriz
 The protocol, persistence, compatibility and visibility verification results are preserved
 in [the implementation report](TELTONIKA_IMPLEMENTATION.md#verification).
 
+Private visibility remains the default. The separate
+[temporary public map test](#temporary-public-map-test) is an explicit opt-in exception;
+enabling it makes the allowlisted unit's location accessible without authentication.
+
 ### TODO (P2): passenger boarding isolation
 
 The existing boarding service does not check `fleet_vehicles.is_test_vehicle` when
@@ -27,6 +31,7 @@ direct boarding request.
 Pilot safeguards: keep `is_test_vehicle=true` and device `public_visible=false`, do not
 start an Android driver session on the pilot unit, and do not use it for real passenger
 boarding tests. These are operational restrictions, not a new server-side boarding guard.
+Keep `PUBLIC_TEST_VEHICLE_IDS` unset except during the explicitly authorized public map test.
 Before broader passenger rollout, reject test vehicles in normal boarding creation and
 renewal and add regression tests for an active Android session with valid Redis evidence.
 No boarding functionality or migration was changed to document this deferral.
@@ -168,12 +173,13 @@ appropriate line using existing platform fleet tools, then PATCH the device's va
 Creation fails on an existing pilot identifier; it never silently claims another unit.
 For an existing test vehicle, use `vehicle_id` instead of `test_vehicle`.
 
-Private-by-default device registrations do not appear in passenger live/ETA/search
+By default, private device registrations do not appear in passenger live/ETA/search
 responses. The existing platform/line dashboard live endpoint includes mapped trackers,
 including private test units for authorized operators; line isolation is enforced by RLS
 and column-level grants that exclude IMEI and raw history. A test vehicle remains excluded
 from public discovery/live, route, ETA, journey-planning and statistics responses even if
-someone starts an Android session on it. Boarding requests have the separate
+someone starts an Android session on it. The explicit Teltonika-only public map allowlist
+below is the sole temporary visibility exception. Boarding requests have the separate
 [accepted TODO (P2)](#todo-p2-passenger-boarding-isolation) above. Its valid telemetry can
 still run through the shared pipeline and be inspected via
 the authenticated telemetry endpoint. The `telemetry` object includes its internal
@@ -195,6 +201,45 @@ using its current `revision`; do not POST a duplicate. Existing installations fr
 remain in place after 031 but default to no variant and private visibility. Add the correct
 variant using PATCH before expecting live route/ETA output. Inspect `/telemetry` and
 `/rejections` even when no route has been assigned.
+
+## Temporary public map test
+
+To view `TEST-FTC927-001` in the existing passenger application, deploy the API change
+only after approval and set this variable on **ensenada-transit-server**, not on the
+`teltonika-ingestion` receiver:
+
+```dotenv
+PUBLIC_TEST_VEHICLE_IDS=TEST-FTC927-001
+```
+
+The allowlist is disabled when unset or empty. Values are exact, case-sensitive fleet
+`tracking_id` values, comma-separated with surrounding whitespace ignored; there are no
+wildcards or prefix matching. Only explicitly listed Teltonika vehicles that are still
+marked `is_test_vehicle=true` can bypass the test flag and device `public_visible=false`
+for public reads. Other test vehicles, private non-test devices and Android test sessions
+remain hidden. Keep both PostgreSQL flags unchanged; no migration, Redis rewrite or
+ingestion change is required.
+
+This uses the shared public filter, so visibility is consistent in `/buses/live`,
+`/routes/:routeId/live` (route ID or variant ID), and variant ETA responses. Journey
+planning and line statistics also use that filter and can include the allowlisted unit.
+Route matching, direction, freshness and ETA calculations are unchanged. Published/active
+routes, active lines/devices, available vehicles, current assignment/revision matching
+and Android-session priority are still required. Private device/source identifiers remain
+stripped from public output. This is public exposure, not administrator-only access.
+
+During this temporary test, verify `/buses/live` and
+`/routes/06964079-f945-4cd8-a7f2-9e2c9bb21c27/live` return `TEST-FTC927-001` with the
+expected variant, coordinates and timestamp. Keep the pilot GPS-only: no active Android
+session or real passenger boarding tests, consistent with the accepted TODO (P2).
+
+**Disable:** remove `PUBLIC_TEST_VEHICLE_IDS` (or set it empty) on the API service and
+restart/redeploy all API replicas with the updated environment. New public requests will
+hide the unit even if its position remains in Redis; no database cleanup is needed.
+Confirm both public live endpoints exclude it while the authenticated administrative
+live endpoint continues to show fresh data. Previously fetched client data may remain
+visible until the passenger app refreshes. No deployment or production variable change
+is performed automatically by this implementation.
 
 ## Simulator and tests
 
@@ -232,6 +277,7 @@ tests retain their explicit local opt-in flags.
 | `TELTONIKA_FRAME_TIMEOUT_SECONDS` | `30`, handshake/frame completion deadline |
 | `TELTONIKA_MAX_LIVE_AGE_SECONDS` | `240`, additionally bounded by API freshness TTL |
 | `LOCATION_TTL_SECONDS` | Set identically on API/receiver; pilot recommendation `240` |
+| `PUBLIC_TEST_VEHICLE_IDS` | API only, empty by default; exact Teltonika test tracking IDs temporarily exposed to public live/ETA/planning/statistics reads |
 | `TELTONIKA_OUTBOX_POLL_MS` | `1000`, non-overlapping worker polling |
 | `TELTONIKA_ALLOWED_PEERS` | Optional comma-separated direct-peer IPs/CIDRs |
 | `TELTONIKA_METRICS_TOKEN` | Optional random bearer secret; empty disables `/metrics` |

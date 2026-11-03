@@ -8,6 +8,8 @@ export async function publicBuses<T extends LiveBus>(buses:T[]) {
   const visible=new Set(routes.map(r=>r.id));
   const candidates=buses.filter(b=>visible.has(b.routeId));
   if(!candidates.length)return [];
+  const publicTestVehicleIds = new Set((process.env.PUBLIC_TEST_VEHICLE_IDS ?? "")
+    .split(",").map(id=>id.trim()).filter(Boolean));
   const testVehicles = new Set((await query(`SELECT tracking_id FROM fleet_vehicles
     WHERE is_test_vehicle AND tracking_id=ANY($1::text[])`, [candidates.map(b=>b.busId)])).rows.map(v=>v.tracking_id));
   const active=(await query(`SELECT s.id,s.bus_id,s.route_id,s.started_at,
@@ -23,10 +25,13 @@ export async function publicBuses<T extends LiveBus>(buses:T[]) {
   const deviceMap = new Map(devices.map(d => [d.id, d]));
   const localSimulation=localSimulationAllowed(process.env,'127.0.0.1',process.env.LOCATION_DEBUG_TOKEN);
   return candidates.flatMap(({sourceId,deviceId,deviceRevision,...bus})=>{
-    if (testVehicles.has(bus.busId)) return [];
+    // Temporary read-only exception for exact Teltonika test IDs, never Android sessions.
+    const allowlistedTestVehicle = bus.provider === "TELTONIKA" && testVehicles.has(bus.busId) && publicTestVehicleIds.has(bus.busId);
+    if (testVehicles.has(bus.busId) && !allowlistedTestVehicle) return [];
     if (bus.provider === "TELTONIKA") {
       const device = deviceId ? deviceMap.get(deviceId) : undefined;
-      if (!device || !device.public_visible || device.is_test_vehicle || unavailableReason(device) ||
+      const temporaryVisibility = allowlistedTestVehicle && device?.is_test_vehicle === true;
+      if (!device || ((!device.public_visible || device.is_test_vehicle) && !temporaryVisibility) || unavailableReason(device) ||
           device.revision !== deviceRevision || device.id !== sourceId || device.tracking_id !== bus.busId ||
           device.route_id !== bus.routeId || device.route_variant_id !== bus.routeVariantId) return [];
       const {sessionId: _sessionId,...publicBus}=bus;

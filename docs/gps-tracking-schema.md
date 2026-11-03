@@ -34,6 +34,9 @@ Proposal for later, to be decided before enabling:
 `is_test_vehicle` in `src/tracking/publicBuses.ts`, which feeds public live, ETA, journey-planning and line-statistics
 responses. The check covers both Teltonika and Android, including legacy sessions without `vehicle_id`. Authorized
 internal dashboards retain access. Deploy that API revision before enabling the receiver; the SQL view alone is not enough.
+The API-only `PUBLIC_TEST_VEHICLE_IDS` allowlist provides an explicit, disabled-by-default exception for exact Teltonika
+test tracking IDs during public map testing. Database flags and the SQL public view stay unchanged; see
+[the temporary test and disable procedure](TELTONIKA.md#temporary-public-map-test).
 
 Additive `031_teltonika_ingestion.sql` extends these same tables with configuration revisions, assignment variants,
 raw AVL JSON and durable delivery state. Existing location rows default to `skipped` and are never automatically replayed.

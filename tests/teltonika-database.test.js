@@ -8,6 +8,12 @@ const { decodeCodec8Extended } = require("../dist/teltonika/codec");
 process.env.JWT_SECRET = "isolated-teltonika-test-secret";
 
 test("additive migration, registry API, telemetry/outbox, privacy and Android compatibility", { timeout: 90000 }, async t => {
+  const previousAllowlist = process.env.PUBLIC_TEST_VEHICLE_IDS;
+  process.env.PUBLIC_TEST_VEHICLE_IDS = "";
+  t.after(() => {
+    if (previousAllowlist === undefined) delete process.env.PUBLIC_TEST_VEHICLE_IDS;
+    else process.env.PUBLIC_TEST_VEHICLE_IDS = previousAllowlist;
+  });
   const pg = new PGlite({ extensions: { pgcrypto } }); t.after(() => pg.close());
   const execute = async (sql, params) => params ? pg.query(sql, params) : ((await pg.exec(sql)).at(-1) ?? { rows: [] });
   const client = { query: execute, release() {} };
@@ -74,6 +80,37 @@ test("additive migration, registry API, telemetry/outbox, privacy and Android co
   for (const endpoint of ["/buses/live", `/routes/${variant.id}/live`, `/routes/${variant.id}/eta?userLat=31.867&userLng=-116.615`]) {
     const response = await fetch(origin + endpoint); assert.equal(response.status, 200); assert.equal((await response.json()).buses.length, 0);
   }
+  await t.test("temporary allowlist exposes the pilot consistently without changing stored flags or cached telemetry", async () => {
+    const cached = structuredClone(live.get(vehicle.tracking_id));
+    const endpoints = ["/buses/live", `/routes/${route.id}/live`, `/routes/${variant.id}/live`,
+      `/routes/${variant.id}/eta?userLat=31.867&userLng=-116.615`];
+    const locations = require("../dist/modules/locations/locations.service").locationsService;
+    const etaBefore = await locations.getEtaForRouteVariant(variant.id, { latitude: 31.867, longitude: -116.615 }, undefined, false);
+    process.env.PUBLIC_TEST_VEHICLE_IDS = ` , ${vehicle.tracking_id}, `;
+    try {
+      for (const endpoint of endpoints) {
+        const response = await fetch(origin + endpoint); assert.equal(response.status, 200);
+        const buses = (await response.json()).buses;
+        assert.equal(buses.length, 1, endpoint);
+        const bus = buses[0];
+        for (const field of ["busId", "routeId", "routeVariantId", "routeVariantDirection", "latitude", "longitude", "timestamp", "speed", "directionConfidence", "routeProgressMeters"]) {
+          assert.equal(bus[field], cached[field], `${endpoint}: ${field}`);
+        }
+        for (const field of ["sourceId", "deviceId", "deviceRevision", "sessionId"]) assert.equal(bus[field], undefined);
+        if (endpoint.includes("/eta?")) {
+          const expected = (await require("../dist/tracking/publicBuses").publicBuses(etaBefore.buses))[0];
+          assert.deepEqual(bus, JSON.parse(JSON.stringify(expected)));
+        }
+      }
+      assert.equal((await pg.query("SELECT is_test_vehicle FROM fleet_vehicles WHERE id=$1", [vehicle.id])).rows[0].is_test_vehicle, true);
+      assert.equal((await pg.query("SELECT public_visible FROM tracking_devices WHERE id=$1", [device.id])).rows[0].public_visible, false);
+      assert.deepEqual(live.get(vehicle.tracking_id), cached);
+    } finally { delete process.env.PUBLIC_TEST_VEHICLE_IDS; }
+    for (const endpoint of endpoints) {
+      assert.equal((await (await fetch(origin + endpoint)).json()).buses.length, 0, `unset hides the cached pilot: ${endpoint}`);
+    }
+    assert.equal((await (await fetch(origin + "/admin/platform/buses/live", { headers })).json()).buses.length, 1);
+  });
   const telemetry = await (await fetch(`${url}/${device.id}/telemetry`, { headers })).json();
   assert.equal(telemetry.telemetry.length, 3); assert.ok(telemetry.telemetry.some(row => row.delivery_reason === "no_gnss_fix"));
   assert.ok(telemetry.telemetry.some(row => row.delivery_reason === "historical"));
@@ -120,12 +157,14 @@ test("additive migration, registry API, telemetry/outbox, privacy and Android co
   assert.equal(live.get(publicVehicle.tracking_id).provider, "ANDROID", "HTTP cannot spoof device provider");
   assert.equal((await (await fetch(origin + "/buses/live")).json()).buses.length, 1, "Android public contract preserved");
   await pg.query("UPDATE fleet_vehicles SET is_test_vehicle=true WHERE id=$1", [publicVehicle.id]);
+  process.env.PUBLIC_TEST_VEHICLE_IDS = publicVehicle.tracking_id;
   for (const endpoint of ["/buses/live", `/routes/${variant.id}/live`, `/routes/${variant.id}/eta?userLat=31.867&userLng=-116.615`]) {
     const response = await fetch(origin + endpoint); assert.equal(response.status, 200);
     assert.equal((await response.json()).buses.length, 0, "Android test vehicle hidden from Redis-backed public endpoints");
   }
   await pg.query("UPDATE driver_sessions SET vehicle_id=NULL WHERE id=$1", [session.id]);
   assert.equal((await (await fetch(origin + "/buses/live")).json()).buses.length, 0, "legacy session cannot bypass test flag");
+  delete process.env.PUBLIC_TEST_VEHICLE_IDS;
   await pg.query("UPDATE driver_sessions SET vehicle_id=$2 WHERE id=$1", [session.id, publicVehicle.id]);
   await pg.query("UPDATE fleet_vehicles SET is_test_vehicle=false WHERE id=$1", [publicVehicle.id]);
   await endSession(conductor.correo, session.id);

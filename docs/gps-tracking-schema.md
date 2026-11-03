@@ -29,11 +29,16 @@ Proposal for later, to be decided before enabling:
 - If volume grows, convert to monthly partitions by `recorded_at` and drop whole partitions (needs a new migration; the identity PK and unique indexes would need `recorded_at` in the key).
 - Take a backup and review row counts before the first deletion; keep invalid points (`is_valid=false`) for a shorter period.
 
-## `is_test_vehicle` is not enforced anywhere yet
-The column and the view `public_vehicle_gps_locations` exist, but no endpoint uses them. Today's public bus list
-(`src/tracking/publicBuses.ts`) reads live positions from Redis and does not check `is_test_vehicle`. The view protects
-nothing by itself. Before test vehicles are used in production, public endpoints (live buses, nearby buses, any history
-read) must filter `NOT is_test_vehicle` or read from the view. Admin endpoints should still see them.
+## Public visibility and the ingestion extension
+029/030 alone do not enforce test-vehicle privacy on Redis-backed endpoints. The Teltonika integration now checks
+`is_test_vehicle` in `src/tracking/publicBuses.ts`, which feeds public live, ETA, journey-planning and line-statistics
+responses. The check covers both Teltonika and Android, including legacy sessions without `vehicle_id`. Authorized
+internal dashboards retain access. Deploy that API revision before enabling the receiver; the SQL view alone is not enough.
+
+Additive `031_teltonika_ingestion.sql` extends these same tables with configuration revisions, assignment variants,
+raw AVL JSON and durable delivery state. Existing location rows default to `skipped` and are never automatically replayed.
+`tracking_device_rejections` contains only malformed AVL values that cannot satisfy the original typed location constraints;
+it is not another vehicle registry or valid-location history. See [TELTONIKA.md](TELTONIKA.md) for ingestion and deployment.
 
 ## Migration safety
 Runner: `scripts/migration-runner.js`. It takes an advisory lock, records `name` and a SHA-256 checksum in

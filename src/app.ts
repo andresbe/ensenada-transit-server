@@ -25,6 +25,7 @@ import { routesRouter as legacyRoutesRouter } from "./modules/routes/routes.rout
 import { errorHandler, notFoundHandler } from "./shared/errors";
 import { sendSuccess } from "./shared/response";
 import { appUpdatesRouter } from "./app-updates/appUpdates.routes";
+import { trackingDevicesRouter } from "./teltonika/devices.routes";
 
 export const app = express();
 app.set("trust proxy", trustedProxies());
@@ -61,6 +62,7 @@ app.use("/admin/lines",lineManagementRouter);
 app.use("/admin/lines/:lineId",scopedLineRouter);
 app.use("/updates", appUpdatesRouter);
 app.use("/admin/users", adminUsersRouter);
+app.use("/admin/tracking-devices", trackingDevicesRouter);
 app.use("/admin/buses", fleetRouter);
 app.use("/users", usersRouter);
 app.use(catalogRouter);

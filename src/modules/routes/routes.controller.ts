@@ -17,7 +17,7 @@ export const getLiveBusesByRouteVariant = async (req: Request, res: Response) =>
 
   sendSuccess(res, {
     routeVariantId,
-    buses,
+    buses: await publicBuses(buses),
   });
 };
 

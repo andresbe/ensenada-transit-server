@@ -1,21 +1,37 @@
 import { query } from "../db";
 import type { LiveBus } from "../modules/locations/locations.types";
 import { localSimulationAllowed } from "./localSimulation";
+import { deviceMappingSql, unavailableReason } from "../teltonika/store";
 export async function publicBuses<T extends LiveBus>(buses:T[]) {
   const routes=(await query(`SELECT id FROM routes r WHERE r.active AND r.visible_in_app
     AND (r.transport_line_id IS NULL OR EXISTS(SELECT 1 FROM transport_lines l WHERE l.id=r.transport_line_id AND l.active))`)).rows;
   const visible=new Set(routes.map(r=>r.id));
   const candidates=buses.filter(b=>visible.has(b.routeId));
   if(!candidates.length)return [];
+  const testVehicles = new Set((await query(`SELECT tracking_id FROM fleet_vehicles
+    WHERE is_test_vehicle AND tracking_id=ANY($1::text[])`, [candidates.map(b=>b.busId)])).rows.map(v=>v.tracking_id));
   const active=(await query(`SELECT s.id,s.bus_id,s.route_id,s.started_at,
     COALESCE(c.correo,s.driver_id::text) AS source_id,v.economic_number
     FROM driver_sessions s LEFT JOIN conductores c ON c.id=s.conductor_id
-    LEFT JOIN fleet_vehicles v ON v.id=s.vehicle_id
+    LEFT JOIN fleet_vehicles v ON v.id=s.vehicle_id OR (s.vehicle_id IS NULL AND v.tracking_id=s.bus_id)
     WHERE s.status='active' AND s.bus_id=ANY($1::text[])
-    AND (s.vehicle_id IS NULL OR (v.archived_at IS NULL AND v.operational_status='available'))`,[candidates.map(b=>b.busId)])).rows;
+    AND (v.id IS NULL OR (v.archived_at IS NULL AND v.operational_status='available' AND NOT v.is_test_vehicle))
+    AND NOT EXISTS(SELECT 1 FROM fleet_vehicles test WHERE test.tracking_id=s.bus_id AND test.is_test_vehicle)`,[candidates.map(b=>b.busId)])).rows;
   const sessions=new Map(active.map(s=>[s.id,s]));
+  const deviceIds = candidates.filter(b => b.provider === "TELTONIKA" && b.deviceId).map(b => b.deviceId);
+  const devices = deviceIds.length ? (await query(`${deviceMappingSql} WHERE d.id=ANY($1::uuid[])`, [deviceIds])).rows : [];
+  const deviceMap = new Map(devices.map(d => [d.id, d]));
   const localSimulation=localSimulationAllowed(process.env,'127.0.0.1',process.env.LOCATION_DEBUG_TOKEN);
-  return candidates.flatMap(({sourceId,...bus})=>{
+  return candidates.flatMap(({sourceId,deviceId,deviceRevision,...bus})=>{
+    if (testVehicles.has(bus.busId)) return [];
+    if (bus.provider === "TELTONIKA") {
+      const device = deviceId ? deviceMap.get(deviceId) : undefined;
+      if (!device || !device.public_visible || device.is_test_vehicle || unavailableReason(device) ||
+          device.revision !== deviceRevision || device.id !== sourceId || device.tracking_id !== bus.busId ||
+          device.route_id !== bus.routeId || device.route_variant_id !== bus.routeVariantId) return [];
+      const {sessionId: _sessionId,...publicBus}=bus;
+      return [{...publicBus,economicNumber:device.economic_number??null}];
+    }
     const session=bus.sessionId ? sessions.get(bus.sessionId) : undefined;
     if(session && session.bus_id===bus.busId && session.route_id===bus.routeId && session.source_id===sourceId && bus.timestamp>=new Date(session.started_at).getTime()) {
       const {sessionId: _sessionId,...publicBus}=bus;

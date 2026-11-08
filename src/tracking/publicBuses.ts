@@ -1,7 +1,11 @@
 import { query } from "../db";
 import type { LiveBus } from "../modules/locations/locations.types";
 import { localSimulationAllowed } from "./localSimulation";
-import { deviceMappingSql, unavailableReason } from "../teltonika/store";
+import {
+  hardwareDeviceMappingSql,
+  hardwareUnavailableReason,
+  isHardwareProvider,
+} from "./hardwareStore";
 export async function publicBuses<T extends LiveBus>(buses:T[]) {
   const routes=(await query(`SELECT id FROM routes r WHERE r.active AND r.visible_in_app
     AND (r.transport_line_id IS NULL OR EXISTS(SELECT 1 FROM transport_lines l WHERE l.id=r.transport_line_id AND l.active))`)).rows;
@@ -20,18 +24,19 @@ export async function publicBuses<T extends LiveBus>(buses:T[]) {
     AND (v.id IS NULL OR (v.archived_at IS NULL AND v.operational_status='available' AND NOT v.is_test_vehicle))
     AND NOT EXISTS(SELECT 1 FROM fleet_vehicles test WHERE test.tracking_id=s.bus_id AND test.is_test_vehicle)`,[candidates.map(b=>b.busId)])).rows;
   const sessions=new Map(active.map(s=>[s.id,s]));
-  const deviceIds = candidates.filter(b => b.provider === "TELTONIKA" && b.deviceId).map(b => b.deviceId);
-  const devices = deviceIds.length ? (await query(`${deviceMappingSql} WHERE d.id=ANY($1::uuid[])`, [deviceIds])).rows : [];
+  const deviceIds = candidates.filter(b => isHardwareProvider(b.provider) && b.deviceId).map(b => b.deviceId);
+  const devices = deviceIds.length ? (await query(`${hardwareDeviceMappingSql} WHERE d.id=ANY($1::uuid[])`, [deviceIds])).rows : [];
   const deviceMap = new Map(devices.map(d => [d.id, d]));
   const localSimulation=localSimulationAllowed(process.env,'127.0.0.1',process.env.LOCATION_DEBUG_TOKEN);
   return candidates.flatMap(({sourceId,deviceId,deviceRevision,...bus})=>{
-    // Temporary read-only exception for exact Teltonika test IDs, never Android sessions.
-    const allowlistedTestVehicle = bus.provider === "TELTONIKA" && testVehicles.has(bus.busId) && publicTestVehicleIds.has(bus.busId);
+    // Temporary read-only exception for exact hardware test IDs, never Android sessions.
+    const hardwareProvider = isHardwareProvider(bus.provider) ? bus.provider : null;
+    const allowlistedTestVehicle = hardwareProvider !== null && testVehicles.has(bus.busId) && publicTestVehicleIds.has(bus.busId);
     if (testVehicles.has(bus.busId) && !allowlistedTestVehicle) return [];
-    if (bus.provider === "TELTONIKA") {
+    if (hardwareProvider) {
       const device = deviceId ? deviceMap.get(deviceId) : undefined;
       const temporaryVisibility = allowlistedTestVehicle && device?.is_test_vehicle === true;
-      if (!device || ((!device.public_visible || device.is_test_vehicle) && !temporaryVisibility) || unavailableReason(device) ||
+      if (!device || ((!device.public_visible || device.is_test_vehicle) && !temporaryVisibility) || hardwareUnavailableReason(device, hardwareProvider) ||
           device.revision !== deviceRevision || device.id !== sourceId || device.tracking_id !== bus.busId ||
           device.route_id !== bus.routeId || device.route_variant_id !== bus.routeVariantId) return [];
       const {sessionId: _sessionId,...publicBus}=bus;

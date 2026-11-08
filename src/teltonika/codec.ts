@@ -1,4 +1,7 @@
 import { createHash } from "crypto";
+import { validImei } from "../tracking/deviceIdentity";
+
+export { validImei } from "../tracking/deviceIdentity";
 
 export class ProtocolError extends Error {}
 
@@ -14,10 +17,6 @@ export interface AvlRecord {
   eventId: number;
   io: Array<{ id: number; hex: string }>;
   fingerprint: string;
-}
-
-export function validImei(value: string): boolean {
-  return /^[0-9]{15}$/.test(value) && !/^0+$/.test(value);
 }
 
 export function crc16IBM(data: Buffer): number {

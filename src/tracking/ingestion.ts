@@ -11,7 +11,7 @@ export async function ingestLocation(payload: LocationUpdateRequest) {
   let timeout: NodeJS.Timeout | undefined;
   try {
     const write = setLiveBusLocation(payload.busId, location);
-    if (payload.provider === "TELTONIKA") {
+    if (payload.provider === "TELTONIKA" || payload.provider === "RUPTELA") {
       await Promise.race([write, new Promise<never>((_resolve, reject) => {
         timeout = setTimeout(() => reject(new Error("publication_timeout")), 5000);
       })]);

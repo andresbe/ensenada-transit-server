@@ -200,7 +200,7 @@ const logProgressDiagnostic = (
   location: LiveBusLocation,
   reason?: string,
 ) => {
-  if (location.provider === "TELTONIKA") return;
+  if (location.provider === "TELTONIKA" || location.provider === "RUPTELA") return;
   console.log(
     JSON.stringify({
       event,

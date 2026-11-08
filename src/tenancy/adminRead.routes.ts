@@ -2,6 +2,7 @@ import { Router } from "express";
 import { query } from "../db";
 import { asyncHandler } from "../middleware/errorHandler";
 import { locationsService } from "../modules/locations/locations.service";
+import { isHardwareProvider } from "../tracking/hardwareStore";
 import { currentLine } from "./context";
 // Mounted only after requireLine or requireSuperadmin.
 export const adminReadRouter = Router({mergeParams:true});
@@ -13,14 +14,14 @@ adminReadRouter.get("/buses/live",asyncHandler(async(req,res)=>{
     WHERE v.archived_at IS NULL AND v.operational_status='available'`)).rows;
   const byId=new Map(vehicles.map(v=>[v.tracking_id,v]));
   const buses=await locationsService.getLiveBuses(req.query.includeStale==='true');
-  const trackerIds = buses.filter(b=>b.provider==='TELTONIKA'&&b.deviceId).map(b=>b.deviceId);
-  const trackers = trackerIds.length ? (await query(`SELECT d.id,d.revision,a.route_variant_id,rv.route_id,
+  const trackerIds = buses.filter(b=>isHardwareProvider(b.provider)&&b.deviceId).map(b=>b.deviceId);
+  const trackers = trackerIds.length ? (await query(`SELECT d.id,d.provider,d.revision,a.route_variant_id,rv.route_id,
     v.tracking_id,v.economic_number,l.color AS fleet_color
     FROM tracking_devices d JOIN vehicle_device_assignments a ON a.device_id=d.id AND a.unassigned_at IS NULL
     JOIN fleet_vehicles v ON v.id=a.vehicle_id
     JOIN route_variants rv ON rv.id=a.route_variant_id JOIN routes r ON r.id=rv.route_id
     LEFT JOIN transport_lines l ON l.id=v.transport_line_id
-    WHERE d.id=ANY($1::uuid[]) AND d.status='active' AND d.provider='TELTONIKA'
+    WHERE d.id=ANY($1::uuid[]) AND d.status='active' AND d.provider IN ('TELTONIKA','RUPTELA')
     AND v.archived_at IS NULL AND v.operational_status='available' AND r.active
     AND r.transport_line_id IS NOT DISTINCT FROM v.transport_line_id
     AND (v.transport_line_id IS NULL OR l.active)
@@ -28,9 +29,9 @@ adminReadRouter.get("/buses/live",asyncHandler(async(req,res)=>{
     AND NOT EXISTS(SELECT 1 FROM driver_sessions s WHERE s.bus_id=v.tracking_id AND s.status='active')`,[trackerIds])).rows : [];
   const trackerById = new Map(trackers.map(d=>[d.id,d]));
   const trackerBuses = buses.flatMap(b=>{
-    if(b.provider!=='TELTONIKA'||!b.deviceId)return [];
+    if(!isHardwareProvider(b.provider)||!b.deviceId)return [];
     const device=trackerById.get(b.deviceId);
-    if(!device||device.revision!==b.deviceRevision||device.id!==b.sourceId||device.tracking_id!==b.busId||
+    if(!device||device.provider!==b.provider||device.revision!==b.deviceRevision||device.id!==b.sourceId||device.tracking_id!==b.busId||
       device.route_id!==b.routeId||device.route_variant_id!==b.routeVariantId)return [];
     const {sourceId,deviceId,deviceRevision,...location}=b;
     return [{...location,economicNumber:device.economic_number,fleetColor:device.fleet_color??null}];

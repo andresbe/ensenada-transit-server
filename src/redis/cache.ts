@@ -93,7 +93,8 @@ export const setLiveBusLocation = async (
       if old then
         local ok, previous = pcall(cjson.decode, old)
         if ok then
-          if previous.provider == 'TELTONIKA' or ARGV[7] == 'TELTONIKA' then
+          if previous.provider == 'TELTONIKA' or previous.provider == 'RUPTELA'
+              or ARGV[7] == 'TELTONIKA' or ARGV[7] == 'RUPTELA' then
             if tonumber(previous.timestamp) >= tonumber(ARGV[2]) then return 0 end
           end
           if tostring(previous.sessionId or '') == ARGV[5] then

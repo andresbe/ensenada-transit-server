@@ -1892,3 +1892,17 @@ su ejecucion sigue siendo responsabilidad de `ensenada-transit-server`.
 Consulta [la guia de integracion y despliegue](docs/TELTONIKA.md) para registrar el IMEI,
 crear `TEST-FTC927-001` privado, configurar TCT/Railway y ejecutar el simulador/pruebas.
 No desplegar ni ejecutar migraciones en produccion sin aprobacion explicita.
+
+## Ruptela Eco5 Lite+
+
+El receptor Ruptela se ejecuta como un tercer servicio independiente con
+`npm run start:ruptela`. Reutiliza el registro y asignaciones de `029`, el historial de
+`030` y la cola durable de `031`; la migracion aditiva `032_ruptela_ingestion.sql` habilita
+la fuente `RUPTELA` y diagnosticos de protocolo acotados. Los receptores nunca ejecutan
+migraciones al arrancar.
+
+Consulta [la guia de Ruptela y Railway](docs/RUPTELA.md) para registrar el IMEI, crear el
+servicio `ruptela-ingestion`, configurar su proxy TCP independiente y validar el primer
+registro fisico. La implementacion no se considera confirmada para el Eco5 Lite+ hasta
+probar un paquete real del firmware instalado. No desplegar ni reconfigurar el equipo sin
+aprobacion explicita.

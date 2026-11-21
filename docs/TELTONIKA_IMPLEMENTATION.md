@@ -203,6 +203,9 @@ securely; do not add it to source control.
 
 The real LTE/GNSS milestone remains pending the physical test. Also pending: load testing
 the chosen Railway plan at 50-500 trackers and choosing a telemetry archive/retention
-policy. Route variants are explicitly assigned, not automatically switched for hardware
-without driver sessions. Operating hours do not suppress records; scheduling remains a
-separate vehicle-operation concern. Run the real-device checklist before public rollout.
+policy. This historical implementation report predates the optional automatic hardware
+direction detector. Assignments remain explicit; migration 033 and
+`HARDWARE_AUTO_DIRECTION_MODE` can now detect an effective variant without rewriting
+them, as documented in `HARDWARE_DIRECTION.md`. Operating hours do not suppress records;
+scheduling remains a separate vehicle-operation concern. Run the real-device checklist
+before public rollout.

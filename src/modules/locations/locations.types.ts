@@ -14,6 +14,7 @@ export interface LocationUpdateRequest {
   busId: string;
   routeId: string;
   routeVariantId: string;
+  assignedRouteVariantId?: string;
   routeVariantDirection: RouteVariantDirection;
   latitude: number;
   longitude: number;
@@ -59,6 +60,7 @@ export interface LiveBus {
   sourceType: SourceType;
   routeId: string;
   routeVariantId: string;
+  assignedRouteVariantId?: string;
   routeVariantDirection: RouteVariantDirection;
   latitude: number;
   longitude: number;

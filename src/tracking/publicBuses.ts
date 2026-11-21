@@ -3,6 +3,7 @@ import type { LiveBus } from "../modules/locations/locations.types";
 import { localSimulationAllowed } from "./localSimulation";
 import {
   hardwareDeviceMappingSql,
+  hardwareLocationMatchesMapping,
   hardwareUnavailableReason,
   isHardwareProvider,
 } from "./hardwareStore";
@@ -27,6 +28,17 @@ export async function publicBuses<T extends LiveBus>(buses:T[]) {
   const deviceIds = candidates.filter(b => isHardwareProvider(b.provider) && b.deviceId).map(b => b.deviceId);
   const devices = deviceIds.length ? (await query(`${hardwareDeviceMappingSql} WHERE d.id=ANY($1::uuid[])`, [deviceIds])).rows : [];
   const deviceMap = new Map(devices.map(d => [d.id, d]));
+  const effectiveVariantIds = [...new Set(candidates
+    .filter(b => isHardwareProvider(b.provider) && b.assignedRouteVariantId &&
+      b.routeVariantId !== b.assignedRouteVariantId)
+    .map(b => b.routeVariantId))];
+  const effectiveVariants = effectiveVariantIds.length
+    ? (await query(
+        "SELECT id::text,route_id::text,direction FROM route_variants WHERE id=ANY($1::uuid[])",
+        [effectiveVariantIds],
+      )).rows
+    : [];
+  const effectiveVariantMap = new Map(effectiveVariants.map(variant => [variant.id, variant]));
   const localSimulation=localSimulationAllowed(process.env,'127.0.0.1',process.env.LOCATION_DEBUG_TOKEN);
   return candidates.flatMap(({sourceId,deviceId,deviceRevision,...bus})=>{
     // Temporary read-only exception for exact hardware test IDs, never Android sessions.
@@ -37,8 +49,11 @@ export async function publicBuses<T extends LiveBus>(buses:T[]) {
       const device = deviceId ? deviceMap.get(deviceId) : undefined;
       const temporaryVisibility = allowlistedTestVehicle && device?.is_test_vehicle === true;
       if (!device || ((!device.public_visible || device.is_test_vehicle) && !temporaryVisibility) || hardwareUnavailableReason(device, hardwareProvider) ||
-          device.revision !== deviceRevision || device.id !== sourceId || device.tracking_id !== bus.busId ||
-          device.route_id !== bus.routeId || device.route_variant_id !== bus.routeVariantId) return [];
+          !hardwareLocationMatchesMapping(
+            device,
+            { ...bus, sourceId, deviceId, deviceRevision },
+            effectiveVariantMap.get(bus.routeVariantId),
+          )) return [];
       const {sessionId: _sessionId,...publicBus}=bus;
       return [{...publicBus,economicNumber:device.economic_number??null}];
     }

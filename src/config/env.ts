@@ -32,10 +32,27 @@ const parseLocationAuthMode = (value: string | undefined): "optional" | "require
   return mode;
 };
 
+const parseHardwareAutoDirectionMode = (
+  value: string | undefined,
+): "off" | "shadow" | "enabled" => {
+  const mode = value ?? "off";
+
+  if (mode !== "off" && mode !== "shadow" && mode !== "enabled") {
+    throw new Error(
+      "HARDWARE_AUTO_DIRECTION_MODE must be 'off', 'shadow', or 'enabled'.",
+    );
+  }
+
+  return mode;
+};
+
 export const env = {
   host: process.env.HOST ?? "0.0.0.0",
   port: parsePort(process.env.PORT),
   corsOrigin: process.env.CORS_ORIGIN ?? "*",
   locationTtlMs: parseTtlSeconds(process.env.LOCATION_TTL_SECONDS) * 1000,
   locationUpdateAuthMode: parseLocationAuthMode(process.env.LOCATION_UPDATE_AUTH_MODE),
+  hardwareAutoDirectionMode: parseHardwareAutoDirectionMode(
+    process.env.HARDWARE_AUTO_DIRECTION_MODE,
+  ),
 };

@@ -233,6 +233,9 @@ const toLiveBus = (location: LiveBusLocation, now = Date.now()): LiveBus => {
     sourceType: location.sourceType,
     routeId: location.routeId,
     routeVariantId: location.routeVariantId,
+    ...(location.assignedRouteVariantId
+      ? { assignedRouteVariantId: location.assignedRouteVariantId }
+      : {}),
     routeVariantDirection: location.routeVariantDirection,
     latitude: location.latitude,
     longitude: location.longitude,

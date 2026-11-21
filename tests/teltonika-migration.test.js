@@ -39,6 +39,7 @@ test("031/032 upgrade populated production 029/030 without rewriting history or 
   assert.deepEqual(logs.filter(m => m.includes("Applying")), [
     "[migrate] Applying 031_teltonika_ingestion.sql",
     "[migrate] Applying 032_ruptela_ingestion.sql",
+    "[migrate] Applying 033_device_direction_state.sql",
   ]);
   const upgraded = (await pg.query("SELECT * FROM vehicle_gps_locations ORDER BY id")).rows;
   for (let i = 0; i < history.length; i++) {

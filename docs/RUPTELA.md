@@ -35,7 +35,9 @@ It must have its own Railway TCP proxy. Never point the Ruptela unit at the Telt
 proxy.
 
 The receiver does not run migrations. It checks for migration 032 before opening its
-listeners and exits if the schema is not ready.
+listeners. Enabled direction detection requires migration 033; shadow falls back to
+assigned direction if 033 is missing, and the default `off` does not access it. See
+[HARDWARE_DIRECTION.md](HARDWARE_DIRECTION.md).
 
 ## Protocol behavior
 
@@ -100,14 +102,15 @@ npm run build
 npm run migrate
 ```
 
-Migration `032_ruptela_ingestion.sql` is the only new migration. It:
+Migration `032_ruptela_ingestion.sql` is the Ruptela protocol migration. It:
 
 1. extends the two `vehicle_gps_locations` checks to allow source `RUPTELA`;
 2. preserves all existing rows, indexes, primary keys, foreign keys and assignments;
 3. adds the protected `tracking_device_packet_diagnostics` table.
 
 Migrations `029_tracking_devices.sql`, `030_vehicle_gps_locations.sql` and
-`031_teltonika_ingestion.sql` are not modified.
+`031_teltonika_ingestion.sql` are not modified. This branch also adds shared, optional
+`033_device_direction_state.sql`; it is unused while automatic direction mode is `off`.
 
 ## Register a test vehicle and device
 

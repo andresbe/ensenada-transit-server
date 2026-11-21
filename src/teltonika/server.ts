@@ -6,6 +6,11 @@ import redis, { connectRedis } from "../redis/client";
 import { receiverConfig } from "./config";
 import { createReceiver } from "./receiver";
 import { authorizeDevice, acceptRecords, publishPending } from "./store";
+import {
+  disableHardwareDirectionShadow,
+  verifyHardwareDirectionSchema,
+} from "../tracking/hardwareDirectionStore";
+import { env } from "../config/env";
 
 async function main() {
   if (!process.env.DATABASE_URL || !process.env.REDIS_URL) throw new Error("DATABASE_URL and REDIS_URL are required.");
@@ -17,6 +22,18 @@ async function main() {
     LEFT JOIN vehicle_device_assignments a ON a.device_id=d.id
     LEFT JOIN vehicle_gps_locations l ON l.device_id=d.id
     LEFT JOIN tracking_device_rejections r ON r.device_id=d.id LIMIT 0`);
+  if (env.hardwareAutoDirectionMode !== "off") {
+    try {
+      await verifyHardwareDirectionSchema();
+    } catch (error) {
+      if (env.hardwareAutoDirectionMode === "enabled") throw error;
+      disableHardwareDirectionShadow();
+      log("hardware_direction_shadow_disabled", {
+        phase: "startup_schema_verification",
+        fallback: "assigned_route_variant",
+      });
+    }
+  }
   const receiver = createReceiver(config, { authorize: authorizeDevice, accept: acceptRecords, log });
   let stopping = false;
   let worker: Promise<void> | undefined;
@@ -72,4 +89,4 @@ async function main() {
   process.on("SIGTERM", () => void shutdown("SIGTERM"));
 }
 
-main().catch(() => { console.error(JSON.stringify({ service: "teltonika", event: "startup_failure", hint: "Check configuration, database access and migrations through 031." })); process.exit(1); });
+main().catch(() => { console.error(JSON.stringify({ service: "teltonika", event: "startup_failure", hint: "Check configuration, database access, migration 031, and migration 033 when hardware direction mode is not off." })); process.exit(1); });

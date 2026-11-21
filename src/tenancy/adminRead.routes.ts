@@ -2,7 +2,10 @@ import { Router } from "express";
 import { query } from "../db";
 import { asyncHandler } from "../middleware/errorHandler";
 import { locationsService } from "../modules/locations/locations.service";
-import { isHardwareProvider } from "../tracking/hardwareStore";
+import {
+  hardwareLocationMatchesMapping,
+  isHardwareProvider,
+} from "../tracking/hardwareStore";
 import { currentLine } from "./context";
 // Mounted only after requireLine or requireSuperadmin.
 export const adminReadRouter = Router({mergeParams:true});
@@ -15,7 +18,7 @@ adminReadRouter.get("/buses/live",asyncHandler(async(req,res)=>{
   const byId=new Map(vehicles.map(v=>[v.tracking_id,v]));
   const buses=await locationsService.getLiveBuses(req.query.includeStale==='true');
   const trackerIds = buses.filter(b=>isHardwareProvider(b.provider)&&b.deviceId).map(b=>b.deviceId);
-  const trackers = trackerIds.length ? (await query(`SELECT d.id,d.provider,d.revision,a.route_variant_id,rv.route_id,
+  const trackers = trackerIds.length ? (await query(`SELECT d.id,d.provider,d.revision,a.route_variant_id,rv.route_id,rv.direction,
     v.tracking_id,v.economic_number,l.color AS fleet_color
     FROM tracking_devices d JOIN vehicle_device_assignments a ON a.device_id=d.id AND a.unassigned_at IS NULL
     JOIN fleet_vehicles v ON v.id=a.vehicle_id
@@ -28,11 +31,13 @@ adminReadRouter.get("/buses/live",asyncHandler(async(req,res)=>{
     AND (v.assigned_route_id IS NULL OR v.assigned_route_id=r.id)
     AND NOT EXISTS(SELECT 1 FROM driver_sessions s WHERE s.bus_id=v.tracking_id AND s.status='active')`,[trackerIds])).rows : [];
   const trackerById = new Map(trackers.map(d=>[d.id,d]));
+  const effectiveVariantIds=[...new Set(buses.filter(b=>isHardwareProvider(b.provider)&&b.assignedRouteVariantId&&b.routeVariantId!==b.assignedRouteVariantId).map(b=>b.routeVariantId))];
+  const effectiveVariants=effectiveVariantIds.length?(await query("SELECT id::text,route_id::text,direction FROM route_variants WHERE id=ANY($1::uuid[])",[effectiveVariantIds])).rows:[];
+  const effectiveVariantById=new Map(effectiveVariants.map(v=>[v.id,v]));
   const trackerBuses = buses.flatMap(b=>{
     if(!isHardwareProvider(b.provider)||!b.deviceId)return [];
     const device=trackerById.get(b.deviceId);
-    if(!device||device.provider!==b.provider||device.revision!==b.deviceRevision||device.id!==b.sourceId||device.tracking_id!==b.busId||
-      device.route_id!==b.routeId||device.route_variant_id!==b.routeVariantId)return [];
+    if(!device||!hardwareLocationMatchesMapping(device,b,effectiveVariantById.get(b.routeVariantId)))return [];
     const {sourceId,deviceId,deviceRevision,...location}=b;
     return [{...location,economicNumber:device.economic_number,fleetColor:device.fleet_color??null}];
   });

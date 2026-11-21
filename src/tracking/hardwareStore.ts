@@ -1,5 +1,14 @@
 import { env } from "../config/env";
 import { getClient, query } from "../db";
+import type { LiveBus } from "../modules/locations/locations.types";
+import type { PoolClient } from "pg";
+import {
+  createHardwareDirectionSession,
+  disableHardwareDirectionShadow,
+  HardwareDirectionDecision,
+  HardwareDirectionSession,
+  isHardwareDirectionShadowAvailable,
+} from "./hardwareDirectionStore";
 import { ingestLocation } from "./ingestion";
 
 export const hardwareProviders = ["TELTONIKA", "RUPTELA"] as const;
@@ -19,6 +28,7 @@ export interface NormalizedHardwareTelemetry {
   speedMps: number;
   heading: number;
   satellites: number;
+  hdop?: number;
   recordedAt: string;
   receivedAt: string;
   isValid: boolean;
@@ -162,11 +172,124 @@ export function hardwareUnavailableReason(
   return null;
 }
 
+export function hardwareLocationMatchesMapping(
+  device: Record<string, any>,
+  bus: Pick<LiveBus,
+    "provider" | "deviceId" | "deviceRevision" | "sourceId" | "busId" | "routeId" |
+    "routeVariantId" | "assignedRouteVariantId" | "routeVariantDirection"
+  >,
+  effectiveVariant?: Record<string, any>,
+): boolean {
+  if (
+    device.provider !== bus.provider ||
+    device.revision !== bus.deviceRevision ||
+    device.id !== bus.deviceId ||
+    device.id !== bus.sourceId ||
+    device.tracking_id !== bus.busId ||
+    device.route_id !== bus.routeId
+  ) return false;
+  if (!bus.assignedRouteVariantId) {
+    return device.route_variant_id === bus.routeVariantId &&
+      device.direction === bus.routeVariantDirection;
+  }
+  if (device.route_variant_id !== bus.assignedRouteVariantId) return false;
+  if (bus.routeVariantId === bus.assignedRouteVariantId) {
+    return device.direction === bus.routeVariantDirection;
+  }
+  return effectiveVariant?.id === bus.routeVariantId &&
+    effectiveVariant.route_id === device.route_id &&
+    effectiveVariant.direction === bus.routeVariantDirection;
+}
+
+const logDirectionDecision = (
+  provider: HardwareProvider,
+  device: Record<string, any>,
+  decision: HardwareDirectionDecision,
+) => {
+  console.log(JSON.stringify({
+    time: new Date().toISOString(),
+    service: "hardware-direction",
+    event: "direction_evaluated",
+    mode: env.hardwareAutoDirectionMode,
+    provider,
+    deviceId: device.id,
+    busId: device.tracking_id,
+    assignedRouteVariantId: decision.assignedRouteVariantId,
+    candidateRouteVariantId: decision.candidateRouteVariantId ?? null,
+    detectedRouteVariantId: decision.detectedRouteVariantId ?? null,
+    effectiveRouteVariantId: decision.effectiveRouteVariantId,
+    confidence: decision.detectionConfidence,
+    reason: decision.reason,
+    switched: decision.switched,
+    displacementMeters: decision.displacementMeters === undefined
+      ? null
+      : Math.round(decision.displacementMeters),
+  }));
+};
+
+const shadowDirectionLockTimeoutMs = 500;
+const shadowDirectionStatementTimeoutMs = 1500;
+
+const logShadowDirectionFailure = (
+  provider: HardwareProvider,
+  device: Record<string, any>,
+  phase: "load" | "observe" | "persist",
+  error: unknown,
+) => {
+  const code = typeof error === "object" && error !== null && "code" in error
+    ? String(error.code)
+    : undefined;
+  console.error(JSON.stringify({
+    time: new Date().toISOString(),
+    service: "hardware-direction",
+    event: "shadow_disabled",
+    provider,
+    deviceId: device.id,
+    busId: device.tracking_id,
+    phase,
+    errorName: error instanceof Error ? error.name : typeof error,
+    ...(code ? { errorCode: code } : {}),
+    fallback: "assigned_route_variant",
+  }));
+};
+
+const runShadowDirectionDatabaseStep = async <T>(
+  client: PoolClient,
+  provider: HardwareProvider,
+  device: Record<string, any>,
+  phase: "load" | "persist",
+  operation: () => Promise<T>,
+): Promise<T | undefined> => {
+  const savepoint = `hardware_direction_shadow_${phase}`;
+  await client.query(`SAVEPOINT ${savepoint}`);
+  try {
+    await client.query(`SET LOCAL lock_timeout TO '${shadowDirectionLockTimeoutMs}ms'`);
+    await client.query(`SET LOCAL statement_timeout TO '${shadowDirectionStatementTimeoutMs}ms'`);
+    const result = await operation();
+    await client.query("SET LOCAL lock_timeout TO DEFAULT");
+    await client.query("SET LOCAL statement_timeout TO DEFAULT");
+    await client.query(`RELEASE SAVEPOINT ${savepoint}`);
+    return result;
+  } catch (error) {
+    try {
+      await client.query(`ROLLBACK TO SAVEPOINT ${savepoint}`);
+      await client.query(`RELEASE SAVEPOINT ${savepoint}`);
+    } catch {
+      // The outer transaction is no longer recoverable, so preserve normal outbox retry behavior.
+      throw error;
+    }
+    disableHardwareDirectionShadow();
+    logShadowDirectionFailure(provider, device, phase, error);
+    return undefined;
+  }
+};
+
 /** Replayable outbox: Redis commits precede delivered_at. Replays are timestamp-idempotent. */
 export async function publishHardwarePending(
   provider: HardwareProvider,
   maxAgeMs = env.locationTtlMs,
 ): Promise<{ published: number; skipped: number; failures: number }> {
+  const directionMode = env.hardwareAutoDirectionMode;
   const devices = (
     await query(
       `SELECT device_id FROM vehicle_gps_locations WHERE delivery_status='pending' AND source=$1
@@ -199,6 +322,28 @@ export async function publishHardwarePending(
           [deviceId, provider],
         )
       ).rows;
+      const directionAssignment = {
+        deviceId,
+        assignmentId: device.assignment_id,
+        routeId: device.route_id,
+        assignedRouteVariantId: device.route_variant_id,
+        assignedDirection: device.direction,
+      };
+      const directionRequested = directionMode !== "off" &&
+        !hardwareUnavailableReason(device, provider) &&
+        (directionMode !== "shadow" || isHardwareDirectionShadowAvailable());
+      let directionSession: HardwareDirectionSession | undefined;
+      if (directionRequested) {
+        directionSession = directionMode === "shadow"
+          ? await runShadowDirectionDatabaseStep(
+              client,
+              provider,
+              device,
+              "load",
+              () => createHardwareDirectionSession(client, directionAssignment, directionMode),
+            )
+          : await createHardwareDirectionSession(client, directionAssignment, directionMode);
+      }
       let watermark = device.last_published_at ? new Date(device.last_published_at).getTime() : 0;
       for (const row of pending) {
         const telemetry = row.telemetry as NormalizedHardwareTelemetry | null;
@@ -213,6 +358,26 @@ export async function publishHardwarePending(
         ) reason = "assignment_changed";
         else if (timestamp <= watermark) reason = "out_of_order";
         if (!reason && telemetry) {
+          let direction: HardwareDirectionDecision | undefined;
+          if (directionSession) {
+            try {
+              direction = directionSession.observe({
+                latitude: telemetry.latitude,
+                longitude: telemetry.longitude,
+                timestamp,
+                speedMps: telemetry.speedMps,
+                heading: telemetry.heading,
+                satellites: telemetry.satellites,
+                hdop: telemetry.hdop,
+              });
+            } catch (error) {
+              if (directionMode !== "shadow") throw error;
+              disableHardwareDirectionShadow();
+              logShadowDirectionFailure(provider, device, "observe", error);
+              directionSession = undefined;
+            }
+          }
+          if (direction) logDirectionDecision(provider, device, direction);
           await ingestLocation({
             provider,
             deviceId,
@@ -221,8 +386,11 @@ export async function publishHardwarePending(
             sourceType: "driver",
             busId: device.tracking_id,
             routeId: device.route_id,
-            routeVariantId: device.route_variant_id,
-            routeVariantDirection: device.direction,
+            routeVariantId: direction?.effectiveRouteVariantId ?? device.route_variant_id,
+            ...(directionMode === "enabled"
+              ? { assignedRouteVariantId: device.route_variant_id }
+              : {}),
+            routeVariantDirection: direction?.effectiveDirection ?? device.direction,
             latitude: telemetry.latitude,
             longitude: telemetry.longitude,
             speed: telemetry.speedMps,
@@ -241,6 +409,19 @@ export async function publishHardwarePending(
         );
         if (reason) deviceCounts.skipped++;
         else deviceCounts.published++;
+      }
+      if (directionSession) {
+        if (directionMode === "shadow") {
+          await runShadowDirectionDatabaseStep(
+            client,
+            provider,
+            device,
+            "persist",
+            () => directionSession!.persist(),
+          );
+        } else {
+          await directionSession.persist();
+        }
       }
       await client.query("COMMIT");
       counts.published += deviceCounts.published;

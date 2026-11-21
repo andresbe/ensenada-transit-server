@@ -14,6 +14,8 @@
     "start:ruptela": "node dist/ruptela/server.js",
     "dev:ruptela": "ts-node-dev --respawn --transpile-only src/ruptela/server.ts",
     "test:ruptela": "npm run build && node --test tests/ruptela-*.test.js tests/teltonika-*.test.js tests/tracking-delivery.test.js tests/public-bus-label.test.js",
+    "test:hardware-direction": "npm run build && node --test tests/hardware-direction*.test.js tests/teltonika-public-visibility.test.js tests/tracking-delivery.test.js tests/journey-planner.test.js",
+    "replay:hardware-direction": "npm run build && node scripts/replay-hardware-direction.js",
     "migrate": "node scripts/run-migrations.js",
     "preupdates:publish": "npm run build",
     "updates:publish": "node scripts/publish-app-update.js",

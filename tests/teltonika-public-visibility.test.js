@@ -29,6 +29,7 @@ function setup(t) {
     if (sql.includes("SELECT tracking_id FROM fleet_vehicles")) return { rows: devices.filter(d => d.is_test_vehicle && params[0].includes(d.tracking_id)) };
     if (sql.includes("FROM driver_sessions s LEFT JOIN")) return { rows: [] };
     if (sql.includes("FROM tracking_devices d")) return { rows: devices.filter(d => params[0].includes(d.id)) };
+    if (sql.includes("FROM route_variants WHERE id=ANY")) return { rows: params[0].map(id => ({ id, route_id: "route", direction: "vuelta" })) };
     throw new Error(`Unexpected query: ${sql}`);
   };
   const sample = d => ({
@@ -88,4 +89,19 @@ test("allowlisting does not bypass device, fleet, route, assignment or Android-p
   }
   visibleRoutes.clear();
   assert.deepEqual(await publicBuses([bus]), [], "allowlisting cannot publish a hidden route");
+});
+
+test("a confirmed effective variant is authorized through the unchanged assigned variant", async t => {
+  const { publicBuses, pilot, sample } = setup(t);
+  process.env.PUBLIC_TEST_VEHICLE_IDS = pilot.tracking_id;
+  const bus = {
+    ...sample(pilot),
+    assignedRouteVariantId: "variant",
+    routeVariantId: "return-variant",
+    routeVariantDirection: "vuelta",
+  };
+  const [visible] = await publicBuses([bus]);
+  assert.equal(visible.routeVariantId, "return-variant");
+  assert.equal(visible.assignedRouteVariantId, "variant");
+  assert.equal(visible.routeVariantDirection, "vuelta");
 });

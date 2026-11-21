@@ -60,8 +60,11 @@ are reused byte-for-byte. `vehicle_device_assignments` links devices to the exis
 remains the public `busId`; there is no second vehicle registry. An installation has an
 optional explicit route variant. It must belong to the vehicle's line and, when set, its assigned
 route. Existing route matching and direction-confidence calculations are reused.
-The tracker's configured variant is not automatically switched at a terminus; an
-administrator must update it. Android session/checkpoint direction detection is unchanged.
+The production-default `HARDWARE_AUTO_DIRECTION_MODE=off` does not switch the configured
+variant. Additive migration 033 and the detector documented in
+[HARDWARE_DIRECTION.md](HARDWARE_DIRECTION.md) provide shadow and explicitly enabled
+automatic direction modes without rewriting the assignment. Android session/checkpoint
+direction detection is unchanged.
 
 The shared pipeline tags Android internally as `ANDROID`; the HTTP validator discards
 client-supplied provider/device identity. Teltonika is normalized as `TELTONIKA`.

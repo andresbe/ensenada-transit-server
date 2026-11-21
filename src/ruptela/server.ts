@@ -12,6 +12,11 @@ import {
   prunePacketDiagnostics,
   publishPending,
 } from "./store";
+import {
+  disableHardwareDirectionShadow,
+  verifyHardwareDirectionSchema,
+} from "../tracking/hardwareDirectionStore";
+import { env } from "../config/env";
 
 async function main() {
   if (!process.env.DATABASE_URL || !process.env.REDIS_URL) {
@@ -33,6 +38,18 @@ async function main() {
     AND conname IN ('vehicle_gps_locations_source_check','vehicle_gps_locations_source_shape_check')
     AND pg_get_constraintdef(oid) LIKE '%RUPTELA%'`);
   if (sourceConstraints.rows[0]?.count !== 2) throw new Error("migration_032_required");
+  if (env.hardwareAutoDirectionMode !== "off") {
+    try {
+      await verifyHardwareDirectionSchema();
+    } catch (error) {
+      if (env.hardwareAutoDirectionMode === "enabled") throw error;
+      disableHardwareDirectionShadow();
+      log("hardware_direction_shadow_disabled", {
+        phase: "startup_schema_verification",
+        fallback: "assigned_route_variant",
+      });
+    }
+  }
 
   const receiver = createReceiver(config, {
     authorize: authorizeDevice,
@@ -129,7 +146,7 @@ main().catch(() => {
   console.error(JSON.stringify({
     service: "ruptela",
     event: "startup_failure",
-    hint: "Check configuration, database access and migrations through 032.",
+    hint: "Check configuration, database access, migration 032, and migration 033 when hardware direction mode is not off.",
   }));
   process.exit(1);
 });

@@ -1906,3 +1906,11 @@ servicio `ruptela-ingestion`, configurar su proxy TCP independiente y validar el
 registro fisico. La implementacion no se considera confirmada para el Eco5 Lite+ hasta
 probar un paquete real del firmware instalado. No desplegar ni reconfigurar el equipo sin
 aprobacion explicita.
+
+## Direccion automatica para hardware
+
+La migracion aditiva `033_device_direction_state.sql` y
+`HARDWARE_AUTO_DIRECTION_MODE=off|shadow|enabled` permiten detectar ida/vuelta para
+Teltonika y Ruptela sin modificar la asignacion administrativa. El valor predeterminado
+es `off`; consulta [el algoritmo, replay de solo lectura y plan de rollout](docs/HARDWARE_DIRECTION.md)
+antes de aplicar la migracion o habilitar Shadow Mode.
